@@ -4,3 +4,6 @@ src-tauri/target/
 *.local
 .DS_Store
 test-results/
+
+# tauri-build generated capability schemas (regenerated on every compile)
+src-tauri/gen/
