@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 #[derive(Serialize)]
@@ -468,6 +469,100 @@ pub fn path_join(dir: String, name: String) -> Result<String, String> {
         return Err(format!("invalid file name: {name}"));
     }
     Ok(PathBuf::from(&dir).join(name).to_string_lossy().to_string())
+}
+
+// --- workspace-wide text search --------------------------------------------
+
+#[derive(Serialize, Clone)]
+pub struct SearchHit {
+    path: String,
+    line: String,
+    #[serde(rename = "lineNo")]
+    line_no: usize,
+}
+
+const SEARCH_SKIP_DIRS: [&str; 4] = [".git", "node_modules", "target", "dist"];
+const SEARCH_EXTS: [&str; 3] = ["md", "markdown", "txt"];
+const MAX_SEARCH_HITS: usize = 200;
+const MAX_SEARCH_FILES: usize = 4_000;
+const MAX_SEARCH_DEPTH: usize = 12;
+const MAX_SEARCH_FILE_BYTES: u64 = 512 * 1024;
+
+/// Literal substring search across the workspace's text files.
+/// ponytail: case-folded substring match, no regex — covers the actual need
+/// without pulling in a regex/grep dependency; the in-document find bar has
+/// regex if it's wanted.
+#[tauri::command]
+pub fn workspace_search(
+    root: String,
+    query: String,
+    case_sensitive: bool,
+    guard: State<'_, FsGuard>,
+    on_result: Channel<crate::pick::Cmd<Vec<SearchHit>>>,
+) {
+    let root_path = PathBuf::from(&root);
+    let allowed = guard.check(&root_path).is_ok();
+    tauri::async_runtime::spawn(async move {
+        let out = if !allowed {
+            Err("folder is not in the allowed scope".to_string())
+        } else if query.is_empty() {
+            Ok(Vec::new())
+        } else {
+            let needle = if case_sensitive { query.clone() } else { query.to_lowercase() };
+            let mut hits = Vec::new();
+            let mut visited = 0usize;
+            walk_search(&root_path, &needle, case_sensitive, 0, &mut visited, &mut hits);
+            Ok(hits)
+        };
+        let result = match out {
+            Ok(v) => crate::pick::Cmd { ok: true, value: v, error: None },
+            Err(e) => crate::pick::Cmd { ok: false, value: Vec::new(), error: Some(e) },
+        };
+        let _ = on_result.send(result);
+    });
+}
+
+fn walk_search(dir: &Path, needle: &str, case_sensitive: bool, depth: usize, visited: &mut usize, hits: &mut Vec<SearchHit>) {
+    if depth > MAX_SEARCH_DEPTH || hits.len() >= MAX_SEARCH_HITS || *visited >= MAX_SEARCH_FILES {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    let mut entries: Vec<_> = entries.flatten().collect();
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        if hits.len() >= MAX_SEARCH_HITS || *visited >= MAX_SEARCH_FILES {
+            return;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        let Ok(ft) = entry.file_type() else { continue };
+        if ft.is_dir() {
+            if !name.starts_with('.') && !SEARCH_SKIP_DIRS.contains(&name.as_str()) {
+                walk_search(&entry.path(), needle, case_sensitive, depth + 1, visited, hits);
+            }
+            continue;
+        }
+        if !SEARCH_EXTS.contains(&name.rsplit('.').next().unwrap_or_default().to_lowercase().as_str()) {
+            continue;
+        }
+        *visited += 1;
+        let Ok(meta) = entry.metadata() else { continue };
+        if meta.len() > MAX_SEARCH_FILE_BYTES {
+            continue;
+        }
+        let Ok(text) = fs::read_to_string(entry.path()) else { continue }; // binary → skip
+        let path = entry.path().to_string_lossy().to_string();
+        let mut per_file = 0usize;
+        for (i, line) in text.lines().enumerate() {
+            let hay = if case_sensitive { line } else { &line.to_lowercase() };
+            if hay.contains(needle) {
+                hits.push(SearchHit { path: path.clone(), line: line.to_string(), line_no: i + 1 });
+                per_file += 1;
+                if hits.len() >= MAX_SEARCH_HITS || per_file >= 20 {
+                    break;
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

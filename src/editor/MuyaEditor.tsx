@@ -1,8 +1,9 @@
 import { Muya } from '@muyajs/core'
 import { useEffect, useRef } from 'react'
-import { convertFileSrc } from '../lib/tauri'
+import { convertFileSrc, tauri } from '../lib/tauri'
 import { useSettings } from '../stores/settings'
 import { useTabs } from '../stores/tabs'
+import { useToast } from '../stores/toast'
 import type { ITocItem } from '@muyajs/core'
 import type { SelectionInfo, Tab } from '../types'
 import { readDomSelection, setSelection } from '../ai/selection'
@@ -80,6 +81,55 @@ export function MuyaEditor({ tab, onInput, onSelection }: Props) {
     muya.on('json-change', debouncedEmit)
     muya.on('selection-change', onSelChange)
 
+    // Image paste: clipboard images are saved to `<doc>_assets/` and inserted
+    // as portable relative Markdown. Needs a saved document (a home on disk).
+    const MIME_EXT: Record<string, string> = {
+      'image/png': 'png',
+      'image/jpeg': 'jpg',
+      'image/gif': 'gif',
+      'image/webp': 'webp',
+      'image/svg+xml': 'svg',
+    }
+    const onPaste = (e: ClipboardEvent) => {
+      const item = [...(e.clipboardData?.items ?? [])].find((i) => MIME_EXT[i.type])
+      if (!item) return
+      const docPath = useTabs.getState().tabs.find((t) => t.id === tab.id)?.path
+      if (!docPath) {
+        useToast.getState().show('Save the document first (⌘S) to attach images')
+        return
+      }
+      e.preventDefault()
+      e.stopPropagation()
+      const ext = MIME_EXT[item.type]
+      const file = item.getAsFile()
+      if (!file) return
+      void file
+        .arrayBuffer()
+        .then(async (buf) => {
+          const docDir = docPath.split(/[\\/]/).slice(0, -1).join('/')
+          const rel = await tauri.imageSaveBytes(docDir, ext, new Uint8Array(buf))
+          insertText(`![image](<${rel}>)`)
+        })
+        .catch((err) => useToast.getState().show(`Image paste: ${err}`))
+    }
+    host.addEventListener('paste', onPaste, true)
+    // Dropped image files arrive via the webview-level drag-drop event, which
+    // App forwards here as `notepad:drop-image`.
+    const onDropImage = (e: Event) => {
+      const src = (e as CustomEvent<string>).detail
+      const docPath = useTabs.getState().tabs.find((t) => t.id === tab.id)?.path
+      if (!docPath) {
+        useToast.getState().show('Save the document first (⌘S) to attach images')
+        return
+      }
+      const docDir = docPath.split(/[\\/]/).slice(0, -1).join('/')
+      void tauri
+        .imageImport(docDir, src)
+        .then((rel) => insertText(`![image](<${rel}>)`))
+        .catch((err) => useToast.getState().show(`Image import: ${err}`))
+    }
+    window.addEventListener('notepad:drop-image', onDropImage)
+
     // Resolve relative/absolute image paths to asset:// URLs for display.
     // Markdown source keeps portable paths; only the DOM src is rewritten.
     const resolveImg = (img: HTMLImageElement) => {
@@ -100,6 +150,8 @@ export function MuyaEditor({ tab, onInput, onSelection }: Props) {
 
     return () => {
       observer.disconnect()
+      host.removeEventListener('paste', onPaste, true)
+      window.removeEventListener('notepad:drop-image', onDropImage)
       detachGhostText()
       clearTimeout(emitTimer)
       clearTimeout(typeTimer)

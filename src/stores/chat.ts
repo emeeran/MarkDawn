@@ -36,12 +36,17 @@ export const useChat = create<ChatStore>((setState, get) => ({
 
   send(system, messages, onDone) {
     if (get().streaming) return
+    // Conversation memory: the model sees recent turns, the UI already shows
+    // them, so only the new messages are appended to the transcript.
+    const history = get()
+      .messages.filter((m) => m.content.trim())
+      .slice(-10)
     setState((s) => ({
       messages: [...s.messages, ...messages, { role: 'assistant', content: '' }],
       streaming: true,
     }))
     const cancel = stream(
-      messages,
+      [...history, ...messages],
       system,
       (delta) => {
         setState((s) => {

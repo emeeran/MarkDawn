@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { findNext, findPrevious, replace, replaceAll, search } from '../editor/editBridge'
+import { useSettings } from '../stores/settings'
 
 interface Props {
   onClose: () => void
@@ -9,8 +10,21 @@ export function FindBar({ onClose }: Props) {
   const [query, setQuery] = useState('')
   const [replacement, setReplacement] = useState('')
   const [isRegexp, setIsRegexp] = useState(false)
+  const [isCaseSensitive, setCase] = useState(false)
+  const [isWholeWord, setWholeWord] = useState(false)
   const [showReplace, setShowReplace] = useState(false)
   const queryRef = useRef<HTMLInputElement>(null)
+
+  // Opened via workspace search: pre-fill and run the search immediately.
+  const preset = useSettings((s) => s.findQuery)
+  useEffect(() => {
+    if (!preset) return
+    setQuery(preset)
+    search(preset, { isCaseSensitive, isWholeWord })
+    findNext()
+    useSettings.getState().set('findQuery', '')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     queryRef.current?.focus()
@@ -18,8 +32,24 @@ export function FindBar({ onClose }: Props) {
 
   function runSearch(q = query) {
     if (!q) return
-    search(q, { isRegexp, isCaseSensitive: false })
+    search(q, { isRegexp, isCaseSensitive, isWholeWord })
     findNext()
+  }
+
+  // Toggling an option re-runs the search so highlights follow immediately.
+  function toggleOpt(kind: 'case' | 'word' | 'regex') {
+    const next = {
+      isCaseSensitive: kind === 'case' ? !isCaseSensitive : isCaseSensitive,
+      isWholeWord: kind === 'word' ? !isWholeWord : isWholeWord,
+      isRegexp: kind === 'regex' ? !isRegexp : isRegexp,
+    }
+    setCase(next.isCaseSensitive)
+    setWholeWord(next.isWholeWord)
+    setIsRegexp(next.isRegexp)
+    if (query) {
+      search(query, next)
+      findNext()
+    }
   }
 
   return (
@@ -37,8 +67,14 @@ export function FindBar({ onClose }: Props) {
             if (e.key === 'Escape') onClose()
           }}
         />
-        <label className="find-opt">
-          <input type="checkbox" checked={isRegexp} onChange={(e) => setIsRegexp(e.target.checked)} /> .*
+        <label className="find-opt" title="Match case">
+          <input type="checkbox" checked={isCaseSensitive} onChange={() => toggleOpt('case')} /> Aa
+        </label>
+        <label className="find-opt" title="Whole word">
+          <input type="checkbox" checked={isWholeWord} onChange={() => toggleOpt('word')} /> |w|
+        </label>
+        <label className="find-opt" title="Regular expression">
+          <input type="checkbox" checked={isRegexp} onChange={() => toggleOpt('regex')} /> .*
         </label>
         <button title="Toggle replace" onClick={() => setShowReplace(!showReplace)}>⇄</button>
         <button title="Close (Esc)" onClick={onClose}>✕</button>

@@ -51,6 +51,8 @@ export async function pickSaveFile(defaultName: string, filters?: { name: string
 }
 
 export const tauri = {
+  /** Allow a user-consented path (pick/drop/launch) for fs + asset access. */
+  fsAllow: (path: string) => invoke<void>('fs_allow', { path }),
   readDir: (path: string) => invoke<FileNode[]>('read_dir', { path }),
   readFile: (path: string) => invoke<string>('read_file', { path }),
   writeFile: (path: string, contents: string) => invoke<void>('write_file', { path, contents }),
@@ -88,6 +90,27 @@ export const tauri = {
 
   storeGet: (name: string) => invoke<Record<string, unknown>>('store_get', { name }),
   storeSet: (name: string, value: unknown) => invoke<void>('store_set', { name, value }),
+
+  /** Literal-substring search across text files in the workspace. */
+  workspaceSearch: (root: string, query: string, caseSensitive: boolean) =>
+    cmdWithChannel<
+      { path: string; line: string; lineNo: number }[]
+    >('workspace_search', { root, query, caseSensitive }),
+
+  /** Files passed to the first app launch (`notepad foo.md`). */
+  startupFiles: () => invoke<string[]>('startup_files'),
+  /** Exit after the webview flushed pending saves (see quit-requested). */
+  quitNow: () => invoke<void>('quit_now'),
+  /** Last-resort save for dirty untitled tabs during quit. */
+  saveRecovery: (title: string, contents: string) =>
+    invoke<string>('save_recovery', { title, contents }),
+
+  /** Copy a dropped/picked image next to the document; returns the relative path. */
+  imageImport: (docDir: string, src: string) =>
+    invoke<string>('image_import', { docDir, src }),
+  /** Write a pasted clipboard image next to the document; returns the relative path. */
+  imageSaveBytes: (docDir: string, ext: string, bytes: Uint8Array) =>
+    invoke<string>('image_save_bytes', { docDir, ext, bytes: Array.from(bytes) }),
 
   /**
    * Stream an AI completion. Returns a cancel function; keys never reach the

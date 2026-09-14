@@ -1,4 +1,5 @@
 import { renderToStaticHTML } from '@muyajs/core'
+import { readAloud, stopReading } from '../ai/tts'
 import { runSelectionTransform } from '../ai/transform'
 import { getMarkdown, getTOC } from '../editor/editBridge'
 import { pickFile, pickFolder, pickSaveFile, tauri } from '../lib/tauri'
@@ -8,6 +9,7 @@ import { useTabs } from '../stores/tabs'
 import { useToast } from '../stores/toast'
 import { useWorkspace } from '../stores/workspace'
 import { themeRaw } from '../themes/raw'
+import type { ThemeId } from '../types'
 
 export interface Command {
   id: string
@@ -16,6 +18,14 @@ export interface Command {
   keywords?: string
   run: () => void
 }
+
+const THEMES: { id: ThemeId; label: string }[] = [
+  { id: 'auto', label: 'Auto (light/dark)' },
+  { id: 'github', label: 'GitHub' },
+  { id: 'night', label: 'Night' },
+  { id: 'newsprint', label: 'Newsprint' },
+  { id: 'pixyll', label: 'Pixyll' },
+]
 
 async function openFile() {
   try {
@@ -58,16 +68,25 @@ body{max-width:800px;margin:0 auto;padding:48px 24px;line-height:1.6}
     return null
   })
   if (!path) return
-  await tauri.writeFile(path, html)
-  useToast.getState().show(`Exported ${path}`)
+  try {
+    await tauri.fsAllow(path)
+    await tauri.writeFile(path, html)
+    useToast.getState().show(`Exported ${path}`)
+  } catch (e) {
+    useToast.getState().show(`Export failed: ${e}`)
+  }
 }
 
 async function exportPandoc(format: string) {
   const tab = useTabs.getState().tabs.find((t) => t.id === useTabs.getState().activeId)
   if (!tab?.path) return useToast.getState().show('Save the file first (⌘S), then export')
   if (!(await tauri.pandocAvailable())) return useToast.getState().show('pandoc is not installed — see pandoc.org')
-  const dest = await tauri.exportPandoc(tab.path, format)
-  useToast.getState().show(`Exported ${dest}`)
+  try {
+    const dest = await tauri.exportPandoc(tab.path, format)
+    useToast.getState().show(`Exported ${dest}`)
+  } catch (e) {
+    useToast.getState().show(`Export: ${e}`)
+  }
 }
 
 function aiDocAction(prompt: string) {
@@ -88,6 +107,7 @@ function continueWriting() {
   ])
 }
 
+/** Every non-prefix action (menus dispatch these ids; the palette lists them). */
 export function getCommands(): Command[] {
   const tabs = useTabs.getState()
   const settings = useSettings.getState()
@@ -95,26 +115,34 @@ export function getCommands(): Command[] {
     ({ id, title, section, run, keywords })
 
   return [
+    cmd('file.new', 'New file', 'File', () => tabs.openUntitled()),
     cmd('file.open', 'Open file…', 'File', () => void openFile()),
     cmd('file.openFolder', 'Open folder…', 'File', () => void openFolder()),
-    cmd('file.new', 'New file', 'File', () => tabs.openUntitled()),
     cmd('file.save', 'Save', 'File', () => void tabs.saveActive()),
     cmd('file.saveAs', 'Save as…', 'File', () => void tabs.saveActiveAs()),
     cmd('file.closeTab', 'Close tab', 'File', () => { if (tabs.activeId) void tabs.close(tabs.activeId) }),
+    cmd('file.reopenTab', 'Reopen closed tab', 'File', () => void tabs.reopenClosed(), 'undo close'),
 
-    cmd('view.toggleSidebar', 'Toggle sidebar', 'View', () => settings.set('sidebarOpen', !settings.sidebarOpen), 'panel'),
-    cmd('view.toggleAI', 'Toggle AI panel', 'View', () => settings.set('aiPanelOpen', !settings.aiPanelOpen), 'chat'),
+    cmd('edit.find', `${settings.findOpen ? '✓ ' : ''}Find / Replace`, 'Edit', () => settings.set('findOpen', !settings.findOpen)),
+    cmd('edit.searchWorkspace', 'Search in workspace…', 'Edit', () => settings.set('workspaceSearchOpen', true), 'grep find across files'),
+
+    cmd('view.sidebar', `${settings.sidebarOpen ? '✓ ' : ''}File tree`, 'View', () => settings.set('sidebarOpen', !settings.sidebarOpen), 'panel sidebar'),
+    cmd('view.outline', 'Outline', 'View', () => { settings.set('sidebarOpen', true); settings.set('sidebarTab', 'outline') }, 'toc headings'),
+    cmd('view.ai', `${settings.aiPanelOpen ? '✓ ' : ''}AI panel`, 'View', () => settings.set('aiPanelOpen', !settings.aiPanelOpen), 'chat'),
     cmd('view.focus', `${settings.focusMode ? '✓ ' : ''}Focus mode`, 'View', () => settings.set('focusMode', !settings.focusMode)),
     cmd('view.typewriter', `${settings.typewriterMode ? '✓ ' : ''}Typewriter mode`, 'View', () => settings.set('typewriterMode', !settings.typewriterMode)),
     cmd('view.ghost', `${settings.ghostText ? '✓ ' : ''}Ghost text autocomplete`, 'View', () => settings.set('ghostText', !settings.ghostText), 'autocomplete ai inline'),
     cmd('view.source', `${settings.sourceMode ? '✓ ' : ''}Source mode`, 'View', () => settings.set('sourceMode', !settings.sourceMode), 'raw markdown'),
-    ...(['github', 'night', 'newsprint', 'pixyll'] as const).map((t) =>
-      cmd(`theme.${t}`, `Theme: ${t}`, 'View', () => settings.set('theme', t), 'appearance'),
+    cmd('view.palette', 'Command palette…', 'View', () => settings.set('palette', 'actions')),
+    cmd('view.quickopen', 'Quick open…', 'View', () => settings.set('palette', 'files')),
+    ...THEMES.map((t) =>
+      cmd(`theme.${t.id}`, `Theme: ${t.label}`, 'View', () => settings.set('theme', t.id), 'appearance'),
     ),
 
     cmd('export.html', 'Export → HTML', 'Export', () => void exportHtml()),
     cmd('export.pdf', 'Export → PDF (print dialog)', 'Export', () => window.print(), 'print'),
     cmd('export.docx', 'Export → Word (docx, pandoc)', 'Export', () => void exportPandoc('docx')),
+    cmd('export.odt', 'Export → OpenDocument (odt, pandoc)', 'Export', () => void exportPandoc('odt')),
     cmd('export.latex', 'Export → LaTeX (pandoc)', 'Export', () => void exportPandoc('latex')),
     cmd('export.rtf', 'Export → RTF (pandoc)', 'Export', () => void exportPandoc('rtf')),
     cmd('export.epub', 'Export → EPUB (pandoc)', 'Export', () => void exportPandoc('epub')),
@@ -125,15 +153,17 @@ export function getCommands(): Command[] {
     cmd('ai.summarize', 'AI → Summarize document', 'AI', () => aiDocAction('Summarize this document as a concise Markdown outline.')),
     cmd('ai.actions', 'AI → Extract action items', 'AI', () => aiDocAction('Extract a Markdown checklist of action items from this document.')),
     cmd('ai.chatClear', 'AI → Clear conversation', 'AI', () => {
-      void import('../stores/chat').then(({ useChat }) => useChat.getState().clear())
+      useChat.getState().clear()
+      useToast.getState().show('AI conversation cleared')
     }, 'clear history'),
 
-    cmd('tts.doc', 'Read aloud → Document', 'Read Aloud', () => void import('../ai/tts').then(({ readAloud }) => readAloud('doc')), 'speak tts'),
-    cmd('tts.sel', 'Read aloud → Selection', 'Read Aloud', () => void import('../ai/tts').then(({ readAloud }) => readAloud('sel'))),
-    cmd('tts.cursor', 'Read aloud → From cursor', 'Read Aloud', () => void import('../ai/tts').then(({ readAloud }) => readAloud('cursor'))),
-    cmd('tts.stop', 'Read aloud → Stop', 'Read Aloud', () => void import('../ai/tts').then(({ stopReading }) => stopReading())),
+    cmd('tts.doc', 'Read aloud → Document', 'Read Aloud', () => void readAloud('doc'), 'speak tts'),
+    cmd('tts.sel', 'Read aloud → Selection', 'Read Aloud', () => void readAloud('sel')),
+    cmd('tts.cursor', 'Read aloud → From cursor', 'Read Aloud', () => void readAloud('cursor')),
+    cmd('tts.stop', 'Read aloud → Stop', 'Read Aloud', () => stopReading()),
 
     cmd('app.settings', 'Open settings…', 'App', () => window.dispatchEvent(new CustomEvent('notepad:open-settings')), 'preferences keys api'),
     cmd('app.clearRecents', 'Clear recent history', 'App', () => window.dispatchEvent(new CustomEvent('notepad:clear-recents')), 'recents recent files clear'),
+    cmd('app.about', 'About Notepad', 'App', () => useToast.getState().show('Notepad — seamless Markdown with AI')),
   ]
 }

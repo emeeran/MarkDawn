@@ -39,8 +39,10 @@ export interface SelectionInfo {
   rect: { top: number; left: number; bottom: number; right: number } | null
 }
 
+export type ThemeId = 'auto' | 'github' | 'night' | 'newsprint' | 'pixyll'
+
 export interface Settings {
-  theme: 'github' | 'night' | 'newsprint' | 'pixyll'
+  theme: ThemeId
   fontSize: number
   focusMode: boolean
   typewriterMode: boolean
@@ -55,10 +57,15 @@ export interface Settings {
   provider: ProviderId
   models: Record<ProviderId, string>
   ollamaUrl: string
+  // Ephemeral UI state — persisted (harmless) but never shown as preferences.
+  findOpen: boolean
+  findQuery: string
+  palette: null | 'actions' | 'files'
+  workspaceSearchOpen: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  theme: 'github',
+  theme: 'auto',
   fontSize: 16,
   focusMode: false,
   typewriterMode: false,
@@ -78,4 +85,8 @@ export const DEFAULT_SETTINGS: Settings = {
     ollama: 'llama3.2',
   },
   ollamaUrl: 'http://localhost:11434',
+  findOpen: false,
+  findQuery: '',
+  palette: null,
+  workspaceSearchOpen: false,
 }

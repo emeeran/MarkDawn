@@ -1,19 +1,21 @@
 import { listen } from '@tauri-apps/api/event'
-import { pickFile, pickFolder } from './lib/tauri'
+import { getCurrentWebview } from '@tauri-apps/api/webview'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useRef, useState } from 'react'
 import type { ITocItem } from '@muyajs/core'
 import { setSelection } from './ai/selection'
-import { readAloud, stopReading } from './ai/tts'
 import { FORMAT_ACTIONS, PARAGRAPH_ACTIONS } from './editor/inserts'
 import { MuyaEditor } from './editor/MuyaEditor'
 import { getCommands } from './commands/registry'
-import { tauri } from './lib/tauri'
+import { pickFolder, pickFile, tauri } from './lib/tauri'
 import { ChatPanel } from './panels/ChatPanel'
 import { CommandPalette } from './panels/CommandPalette'
 import { FileTree } from './panels/FileTree'
 import { FindBar } from './panels/FindBar'
 import { Outline } from './panels/Outline'
 import { SettingsDialog } from './panels/SettingsDialog'
+import { WorkspaceSearch } from './panels/WorkspaceSearch'
 import { WordCount } from './panels/WordCount'
 import { TabsBar } from './panels/TabsBar'
 import { DiffPopover, SelectionActionBar } from './panels/TransformPopover'
@@ -22,12 +24,31 @@ import { useSettings } from './stores/settings'
 import { useTabs } from './stores/tabs'
 import { useToast } from './stores/toast'
 import { useWorkspace } from './stores/workspace'
-import type { SelectionInfo, Settings as SettingsType } from './types'
+import type { SelectionInfo, ThemeId } from './types'
 
 interface DiffRequest {
   action: string
   extra?: string
   key: number
+}
+
+const darkQuery = window.matchMedia('(prefers-color-scheme: dark)')
+
+function resolvedTheme(theme: ThemeId): string {
+  return theme === 'auto' ? (darkQuery.matches ? 'night' : 'github') : theme
+}
+
+/** Guard across re-renders: the flush must happen exactly once per quit. */
+let quitting = false
+
+async function quitFlow() {
+  if (quitting) return
+  quitting = true
+  try {
+    await useTabs.getState().flushAll()
+  } finally {
+    await invoke('quit_now').catch(() => {})
+  }
 }
 
 export function App() {
@@ -36,10 +57,8 @@ export function App() {
   const toast = useToast((s) => s.message)
 
   const [toc, setToc] = useState<ITocItem[]>([])
-  const [findOpen, setFindOpen] = useState(false)
-  const [palette, setPalette] = useState<null | 'actions' | 'files'>(null)
-  const [settingsOpen, setSettingsOpen] = useState(false)
   const [recents, setRecents] = useState<string[]>([])
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [selUi, setSelUi] = useState<{ text: string; rect: SelectionInfo['rect'] }>({ text: '', rect: null })
   const [diff, setDiff] = useState<DiffRequest | null>(null)
   const selStableTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -57,7 +76,39 @@ export function App() {
       listen<string[]>('fs-changed', (e) => handleFsChanged(e.payload)),
       // Native menu (accelerators live Rust-side; no duplicate JS keybindings).
       listen<string>('menu-action', (e) => dispatchMenuAction(e.payload)),
+      // Rust intercepted the quit; flush saves, then really exit.
+      listen('quit-requested', () => void quitFlow()),
     ]
+    // Files from the very first launch (`notepad foo.md`).
+    void tauri
+      .startupFiles()
+      .then((files) => files.forEach((f) => void useTabs.getState().open(f)))
+      .catch(() => {})
+
+    // Window close (X button): same flush-then-exit contract as app quit.
+    let unClose: (() => void) | undefined
+    void getCurrentWindow()
+      .onCloseRequested(async (e) => {
+        e.preventDefault()
+        await quitFlow()
+      })
+      .then((fn) => { unClose = fn })
+
+    // Drag-and-drop: open markdown files, import images into the active doc.
+    let unDrop: (() => void) | undefined
+    void getCurrentWebview()
+      .onDragDropEvent((event) => {
+        if (event.payload.type !== 'drop') return
+        for (const path of event.payload.paths) {
+          if (/\.(md|markdown|txt)$/i.test(path)) {
+            void useTabs.getState().open(path)
+          } else {
+            window.dispatchEvent(new CustomEvent('notepad:drop-image', { detail: path }))
+          }
+        }
+      })
+      .then((fn) => { unDrop = fn })
+
     // DOM CustomEvents from feature modules (NOT tauri IPC events — these must
     // use window listeners; tauri listen() never sees them).
     const onTransform = (e: Event) => {
@@ -72,6 +123,8 @@ export function App() {
     window.addEventListener('notepad:clear-recents', onClearRecents)
     return () => {
       unlisteners.forEach((u) => void u.then((f) => f()))
+      unClose?.()
+      unDrop?.()
       window.removeEventListener('notepad:transform', onTransform)
       window.removeEventListener('notepad:open-settings', onOpenSettings)
       window.removeEventListener('notepad:clear-recents', onClearRecents)
@@ -79,53 +132,29 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // --- theme + font size ---
+  // --- theme (auto follows the OS) + font size ---
   useEffect(() => {
-    document.documentElement.dataset.theme = settings.theme
-    document.documentElement.style.setProperty('--editor-font-size', `${settings.fontSize}px`)
+    const apply = () => {
+      document.documentElement.dataset.theme = resolvedTheme(settings.theme)
+      document.documentElement.style.setProperty('--editor-font-size', `${settings.fontSize}px`)
+    }
+    apply()
+    if (settings.theme !== 'auto') return
+    darkQuery.addEventListener('change', apply)
+    return () => darkQuery.removeEventListener('change', apply)
   }, [settings.theme, settings.fontSize])
 
+  /**
+   * Para/format/theme are prefix-dispatched (menu-only idioms); everything
+   * else resolves through the command registry — one implementation for
+   * palette and menu, no duplicate switches.
+   */
   function dispatchMenuAction(id: string) {
     const s = useSettings.getState()
-    const t = useTabs.getState()
     if (id.startsWith('para.')) return void PARAGRAPH_ACTIONS[id]?.()
     if (id.startsWith('fmt.')) return void FORMAT_ACTIONS[id]?.()
-    if (id.startsWith('theme:')) return s.set('theme', id.slice(6) as SettingsType['theme'])
-    switch (id) {
-      case 'file.new': return t.openUntitled()
-      case 'file.save': return void t.saveActive()
-      case 'file.saveAs': return void t.saveActiveAs()
-      case 'file.closeTab': return t.activeId ? void t.close(t.activeId) : undefined
-      case 'edit.find': return setFindOpen((v) => !v)
-      case 'view.source': {
-        if (s.sourceMode) setSelection({ text: '', rect: null })
-        return s.set('sourceMode', !s.sourceMode)
-      }
-      case 'view.focus': return s.set('focusMode', !s.focusMode)
-      case 'view.typewriter': return s.set('typewriterMode', !s.typewriterMode)
-      case 'view.sidebar': return s.set('sidebarOpen', !s.sidebarOpen)
-      case 'view.outline': {
-        s.set('sidebarOpen', true)
-        return s.set('sidebarTab', 'outline')
-      }
-      case 'view.ai': return s.set('aiPanelOpen', !s.aiPanelOpen)
-      case 'view.chatClear':
-        useChat.getState().clear()
-        return useToast.getState().show('AI conversation cleared')
-      case 'tts.doc': return void readAloud('doc')
-      case 'tts.sel': return void readAloud('sel')
-      case 'tts.cursor': return void readAloud('cursor')
-      case 'tts.stop': return stopReading()
-      case 'app.settings': return setSettingsOpen(true)
-      case 'view.palette': return setPalette('actions')
-      case 'view.quickopen': return setPalette('files')
-      case 'help.about': return useToast.getState().show('Notepad v0.1.0 — seamless Markdown with AI')
-      default: {
-        // file.open / file.openFolder / app.settings / export.* live in the registry
-        const cmd = getCommands().find((c) => c.id === id)
-        if (cmd) cmd.run()
-      }
-    }
+    if (id.startsWith('theme:')) return s.set('theme', id.slice(6) as ThemeId)
+    getCommands().find((c) => c.id === id)?.run()
   }
 
   function clearRecents() {
@@ -138,12 +167,17 @@ export function App() {
     dirs.forEach((d) => void useWorkspace.getState().refresh(d))
 
     const t = useTabs.getState()
-    const active = t.tabs.find((tab) => tab.id === t.activeId)
-    if (active?.path && paths.includes(active.path)) {
-      if (!active.dirty) {
-        void tauri.readFile(active.path).then((md) => t.markSaved(active.id, md)).catch(() => {})
+    for (const tab of t.tabs) {
+      if (!tab.path || !paths.includes(tab.path)) continue
+      // Our own autosave echoes back — not an external change.
+      if (t.consumeSelfSave(tab.path)) continue
+      if (!tab.dirty) {
+        // Quietly adopt the newer file (any tab, not just the active one).
+        void tauri.readFile(tab.path).then((md) => t.markSaved(tab.id, md)).catch(() => {})
       } else {
-        t.setBanner('This file changed on disk.')
+        t.markStale(tab.path)
+        if (tab.id === t.activeId) t.setBanner('This file changed on disk.')
+        // Background dirty tabs surface the banner when activated (setActive).
       }
     }
   }
@@ -152,7 +186,10 @@ export function App() {
     const t = useTabs.getState()
     const active = t.tabs.find((tab) => tab.id === t.activeId)
     setBanner(null)
-    if (active?.path) void tauri.readFile(active.path).then((md) => t.markSaved(active.id, md)).catch(() => {})
+    if (active?.path) {
+      t.clearStale(active.path)
+      void tauri.readFile(active.path).then((md) => t.markSaved(active.id, md)).catch(() => {})
+    }
   }
 
   function onInput(markdown: string, nextToc: ITocItem[]) {
@@ -222,7 +259,7 @@ export function App() {
               </span>
             </div>
           )}
-          {findOpen && <FindBar onClose={() => setFindOpen(false)} />}
+          {settings.findOpen && <FindBar onClose={() => settings.set('findOpen', false)} />}
           {activeTab ? (
             settings.sourceMode ? (
               <textarea
@@ -267,7 +304,8 @@ export function App() {
 
       <WordCount />
       {toast && <div className="toast">{toast}</div>}
-      {palette && <CommandPalette mode={palette} onClose={() => setPalette(null)} />}
+      {settings.palette && <CommandPalette mode={settings.palette} onClose={() => settings.set('palette', null)} />}
+      {settings.workspaceSearchOpen && <WorkspaceSearch onClose={() => settings.set('workspaceSearchOpen', false)} />}
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
     </div>
   )

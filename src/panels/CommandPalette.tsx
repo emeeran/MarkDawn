@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { getCommands, type Command } from '../commands/registry'
+import { useTabs } from '../stores/tabs'
 import { useWorkspace } from '../stores/workspace'
 
 interface Props {
@@ -21,7 +22,7 @@ export function CommandPalette({ mode, onClose }: Props) {
     const files: Command[] = []
     const walk = (nodes: typeof tree) => {
       for (const n of nodes) {
-        if (!n.isDir) files.push({ id: `file:${n.path}`, title: n.name, section: 'File', run: () => void useWorkspaceOpen(n.path) })
+        if (!n.isDir) files.push({ id: `file:${n.path}`, title: n.name, section: 'File', run: () => void useTabs.getState().open(n.path) })
         if (n.children) walk(n.children)
       }
     }
@@ -78,11 +79,6 @@ export function CommandPalette({ mode, onClose }: Props) {
       </div>
     </div>
   )
-}
-
-async function useWorkspaceOpen(path: string) {
-  const { useTabs } = await import('../stores/tabs')
-  void useTabs.getState().open(path)
 }
 
 function fuzzy(text: string, q: string): boolean {

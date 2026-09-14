@@ -4,7 +4,8 @@ import { isProviderConfigured } from '../ai/client'
 import { buildContext } from '../ai/context'
 import { BASE_SYSTEM, DOC_CHAT_TEMPLATE } from '../ai/prompts'
 import { getSelection } from '../ai/selection'
-import { getMarkdown, insertText, replaceSelection } from '../editor/editBridge'
+import { getMarkdown, getTOC, insertText, replaceSelection } from '../editor/editBridge'
+import { tauri } from '../lib/tauri'
 import { useChat } from '../stores/chat'
 import { useSettings } from '../stores/settings'
 import { useToast } from '../stores/toast'
@@ -27,12 +28,19 @@ export function ChatPanel() {
   }, [settings.provider])
 
   useEffect(() => {
-    if (!workspace.root) return setNotepad(null)
-    void import('../lib/tauri').then(async ({ tauri }) => {
+    if (!workspace.root) {
+      setNotepad(null)
+      return
+    }
+    let gone = false
+    void (async () => {
       const path = await tauri.pathJoin(workspace.root!, 'NOTEPAD.md')
       const md = await tauri.readFile(path).catch(() => null)
-      setNotepad(md)
-    })
+      if (!gone) setNotepad(md)
+    })()
+    return () => {
+      gone = true
+    }
   }, [workspace.root])
 
   useEffect(() => {
@@ -50,16 +58,22 @@ export function ChatPanel() {
     const sel = getSelection()
     const msgs: { role: 'user' | 'assistant'; content: string }[] = []
     if (ctxMode === 'document') {
-      const ctx = buildContext(getMarkdown(), '', sel.text ? sel : null)
-      const payload = ctx.selection
+      const outline = getTOC()
+        .map((t) => `${'  '.repeat(Math.max(0, t.lvl - 1))}- ${t.content}`)
+        .join('\n')
+      const ctx = buildContext(getMarkdown(), outline, sel.text ? sel : null)
+      let payload = ctx.selection
         ? `${ctx.doc}\n\nThe user is working with this selected text: ${ctx.selection}`
         : ctx.doc
+      if (ctx.outline) payload += `\n\nDocument outline:\n${ctx.outline}`
       msgs.push({ role: 'user', content: `${DOC_CHAT_TEMPLATE(payload)}\n\n${text}` })
     } else if (ctxMode === 'selection' && sel.text.trim()) {
       msgs.push({ role: 'user', content: `Selected text:\n\n${sel.text}\n\n${text}` })
     } else {
       msgs.push({ role: 'user', content: text })
     }
+    // Prior turns ride along from the chat store — the "conversation" actually
+    // is one.
     send(system, msgs)
   }
 
@@ -72,7 +86,11 @@ export function ChatPanel() {
       </div>
 
       {!hasKey && settings.provider !== 'ollama' && (
-        <div className="chat-warn" onClick={() => settings.set('aiPanelOpen', settings.aiPanelOpen)}>
+        <div
+          className="chat-warn"
+          onClick={() => window.dispatchEvent(new CustomEvent('notepad:open-settings'))}
+          role="button"
+        >
           No API key for {settings.provider}. Open Settings (⌘,) to add one.
         </div>
       )}
@@ -92,10 +110,17 @@ export function ChatPanel() {
                   <div className="chat-msg-actions">
                     <button onClick={() => void insertText(m.content)}>Insert at cursor</button>
                     <button
-                      disabled={!getSelection().text}
-                      onClick={() => void replaceSelection(m.content).then((ok) => {
-                        if (!ok) useToast.getState().show('Could not apply edit')
-                      })}
+                      onClick={() => {
+                        // Selection is read at click time — a render-time check
+                        // went stale the moment the caret moved.
+                        if (!getSelection().text.trim()) {
+                          useToast.getState().show('Select some text first')
+                          return
+                        }
+                        void replaceSelection(m.content).then((ok) => {
+                          if (!ok) useToast.getState().show('Could not apply edit')
+                        })
+                      }}
                     >
                       Replace selection
                     </button>

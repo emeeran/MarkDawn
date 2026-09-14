@@ -280,6 +280,8 @@ input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
 .palette-item.selected { background: color-mix(in srgb, var(--accent) 15%, transparent); }
 .palette-item.muted { color: var(--muted); cursor: default; }
 .palette-section { color: var(--muted); font-size: 11px; }
+.ws-hit { gap: 10px; }
+.ws-hit .ws-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 
 .modal {
   margin-top: 10vh; width: 560px; max-width: 92vw; max-height: 78vh; overflow-y: auto;

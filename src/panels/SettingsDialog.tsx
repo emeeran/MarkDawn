@@ -1,13 +1,22 @@
 import { useEffect, useState } from 'react'
 import { tauri } from '../lib/tauri'
 import { useSettings } from '../stores/settings'
-import type { ProviderId } from '../types'
+import { useToast } from '../stores/toast'
+import type { ProviderId, ThemeId } from '../types'
 
 const PROVIDERS: { id: ProviderId; label: string; needsKey: boolean }[] = [
   { id: 'anthropic', label: 'Anthropic', needsKey: true },
   { id: 'openai', label: 'OpenAI', needsKey: true },
   { id: 'groq', label: 'Groq', needsKey: true },
   { id: 'ollama', label: 'Ollama (local)', needsKey: false },
+]
+
+const THEMES: { id: ThemeId; label: string }[] = [
+  { id: 'auto', label: 'Auto (light/dark)' },
+  { id: 'github', label: 'GitHub' },
+  { id: 'night', label: 'Night' },
+  { id: 'newsprint', label: 'Newsprint' },
+  { id: 'pixyll', label: 'Pixyll' },
 ]
 
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
@@ -17,31 +26,44 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [modelList, setModelList] = useState<string[]>([])
   const [voiceList, setVoiceList] = useState<string[]>([])
   const [ttsOk, setTtsOk] = useState<boolean | null>(null)
+  const [fetching, setFetching] = useState(false)
 
   useEffect(() => {
-    void tauri.secretStatus().then(setKeyStatus)
+    // A locked keychain must not silently no-op; surface the failure.
+    tauri.secretStatus().then(setKeyStatus).catch((e) => useToast.getState().show(`Keychain: ${e}`))
     void tauri.ttsAvailable().then(setTtsOk)
   }, [])
 
   async function saveKey(p: ProviderId) {
     const key = keyDraft[p]?.trim()
     if (!key) return
-    await tauri.secretSet(p, key)
-    setKeyDraft((d) => ({ ...d, [p]: '' }))
-    setKeyStatus(await tauri.secretStatus())
+    try {
+      await tauri.secretSet(p, key)
+      setKeyDraft((d) => ({ ...d, [p]: '' }))
+      setKeyStatus(await tauri.secretStatus())
+    } catch (e) {
+      useToast.getState().show(`Saving key: ${e}`)
+    }
   }
 
   async function removeKey(p: ProviderId) {
-    await tauri.secretDelete(p)
-    setKeyStatus(await tauri.secretStatus())
+    try {
+      await tauri.secretDelete(p)
+      setKeyStatus(await tauri.secretStatus())
+    } catch (e) {
+      useToast.getState().show(`Removing key: ${e}`)
+    }
   }
 
   async function fetchModels() {
+    setFetching(true)
     try {
       setModelList(await tauri.fetchModels(settings.provider, settings.ollamaUrl))
     } catch (e) {
       setModelList([])
-      alert(String(e))
+      useToast.getState().show(`Fetch models: ${e}`)
+    } finally {
+      setFetching(false)
     }
   }
 
@@ -50,7 +72,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
       setVoiceList(await tauri.ttsVoices())
     } catch (e) {
       setVoiceList([])
-      alert(String(e))
+      useToast.getState().show(`Fetch voices: ${e}`)
     }
   }
 
@@ -62,11 +84,10 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
         <h3>Appearance</h3>
         <div className="settings-row">
           <label>Theme</label>
-          <select value={settings.theme} onChange={(e) => settings.set('theme', e.target.value as typeof settings.theme)}>
-            <option value="github">GitHub</option>
-            <option value="night">Night</option>
-            <option value="newsprint">Newsprint</option>
-            <option value="pixyll">Pixyll</option>
+          <select value={settings.theme} onChange={(e) => settings.set('theme', e.target.value as ThemeId)}>
+            {THEMES.map((t) => (
+              <option key={t.id} value={t.id}>{t.label}</option>
+            ))}
           </select>
           <label>Font size</label>
           <input
@@ -120,7 +141,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             onClick={() =>
               void tauri
                 .ttsSpeak('Read aloud is ready.', settings.ttsVoice || undefined)
-                .catch((e) => alert(`Read aloud: ${e}`))
+                .catch((e) => useToast.getState().show(`Read aloud: ${e}`))
             }
             disabled={ttsOk === false}
             title="Speak a sample line with the configured voice"
@@ -148,7 +169,9 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           <datalist id={`models-${settings.provider}`}>
             {modelList.map((m) => <option key={m} value={m} />)}
           </datalist>
-          <button onClick={() => void fetchModels()}>Fetch models</button>
+          <button onClick={() => void fetchModels()} disabled={fetching}>
+            {fetching ? 'Fetching…' : 'Fetch models'}
+          </button>
         </div>
         {settings.provider === 'ollama' && (
           <div className="settings-row">
@@ -165,6 +188,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             </label>
             <input
               type="password"
+              autoComplete="new-password"
               placeholder={keyStatus[p.id] ? '••••••••' : 'paste API key'}
               value={keyDraft[p.id] ?? ''}
               onChange={(e) => setKeyDraft((d) => ({ ...d, [p.id]: e.target.value }))}

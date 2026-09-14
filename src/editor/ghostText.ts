@@ -20,8 +20,11 @@ let overlay: HTMLDivElement | null = null
 let pendingTimer: ReturnType<typeof setTimeout> | undefined
 let activeCancel: { cancel: () => void } | null = null
 let accepted = false
+let attached = false
 
 export function attachGhostText(h: GhostHooks) {
+  if (attached) return // idempotent — double-attach leaked duplicate listeners
+  attached = true
   hooks = h
   document.addEventListener('keydown', onKeyDown, true)
   document.addEventListener('mousedown', dismiss)
@@ -29,6 +32,8 @@ export function attachGhostText(h: GhostHooks) {
 }
 
 export function detachGhostText() {
+  if (!attached && !hooks) return
+  attached = false
   hooks = null
   cancelStream()
   clearTimeout(pendingTimer)
@@ -97,6 +102,13 @@ function dismiss() {
 
 function onKeyDown(e: KeyboardEvent) {
   if (!overlay) return
+  // Tab in an unrelated input (e.g. the chat textarea) must not capture the
+  // suggestion — only keys inside the editor count.
+  const target = e.target as HTMLElement | null
+  const inEditor = !!target?.closest?.('.editor-host')
+  const inOtherField =
+    !!target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.isContentEditable)
+  if (!inEditor && inOtherField) return
   if (e.key === 'Tab' && !accepted) {
     e.preventDefault()
     e.stopPropagation()

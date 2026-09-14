@@ -60,24 +60,44 @@ export function DiffPopover({
   const [error, setError] = useState<string | null>(null)
   const original = useRef(getSelection().text.trim()).current
   const cancelRef = useRef<{ cancel: () => void } | null>(null)
+  const cancelled = useRef(false)
+  const errored = useRef(false)
 
   useEffect(() => {
     cancelRef.current = stream(
       [{ role: 'user', content: buildTransformPrompt(request.action, original, request.extra) }],
       BASE_SYSTEM,
       (delta) => setResult((r) => r + delta),
-      () => setBusy(false),
+      () => {
+        // Rust always sends Done after Error; only the first terminal state counts.
+        if (!errored.current) setBusy(false)
+      },
       (message) => {
+        errored.current = true
         setBusy(false)
         setError(message)
       },
     )
     return () => cancelRef.current?.cancel()
-    // Run once per request.
+    // Primitive deps: an object dep re-fired this stream on every App render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [request])
+  }, [request.action, request.extra, original])
+
+  function doCancel() {
+    cancelled.current = true
+    cancelRef.current?.cancel()
+    setBusy(false) // an aborted Rust task sends neither Done nor Error
+  }
 
   async function apply() {
+    // The diff was computed against a frozen snapshot; only apply if the
+    // selection still is that text (otherwise the edit lands in the wrong place).
+    const current = getSelection().text.trim()
+    if (current !== original) {
+      useToast.getState().show('Selection changed — reselect and retry')
+      onClose()
+      return
+    }
     const ok = await replaceSelection(result.trim())
     if (!ok) useToast.getState().show('Could not apply the edit')
     onClose()
@@ -86,8 +106,8 @@ export function DiffPopover({
   return (
     <div className="diff-popover" style={popStyle(selRect)}>
       <div className="diff-header">
-        <span>{busy ? 'Working…' : 'Proposed change'}</span>
-        {busy && <button onClick={() => cancelRef.current?.cancel()}>Stop</button>}
+        <span>{cancelled.current ? 'Stopped' : busy ? 'Working…' : 'Proposed change'}</span>
+        {busy && <button onClick={doCancel}>Stop</button>}
       </div>
       <div className="diff-body">
         {error ? (

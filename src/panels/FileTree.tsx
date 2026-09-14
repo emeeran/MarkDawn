@@ -21,6 +21,10 @@ export function FileTree() {
   async function create(kind: 'file' | 'dir') {
     const name = newName.trim()
     if (!name) return
+    if (invalidName(name)) {
+      useToast.getState().show('Names may not contain / \\ or path separators')
+      return
+    }
     const path = await tauri.pathJoin(root!, name)
     try {
       if (kind === 'file') await tauri.createFile(path)
@@ -78,6 +82,10 @@ function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
     const trimmed = name.trim()
     setRenaming(false)
     if (!trimmed || trimmed === node.name) return
+    if (invalidName(trimmed)) {
+      useToast.getState().show('Names may not contain / \\ or path separators')
+      return
+    }
     const parent = await tauri.pathDir(node.path)
     const newPath = await tauri.pathJoin(parent, trimmed)
     try {
@@ -145,4 +153,9 @@ async function openFolderPicker() {
   } catch (e) {
     useToast.getState().show(`Open folder: ${e}`)
   }
+}
+
+/** A file name is a single component — no separators, no traversal. */
+function invalidName(name: string): boolean {
+  return !name || name === '.' || name === '..' || /[\\/:*?"<>|]/.test(name)
 }

@@ -2,6 +2,12 @@ import { create } from 'zustand'
 import { tauri } from '../lib/tauri'
 import { DEFAULT_SETTINGS, type Settings } from '../types'
 
+/**
+ * Model families that can't stream chat (classifiers, TTS, embeddings…).
+ * Keep in sync with is_chat_model in src-tauri/src/ai_proxy.rs.
+ */
+export const NON_CHAT_MODEL = /guard|whisper|tts|embed|rerank|safety|dall-e/i
+
 interface SettingsStore extends Settings {
   loaded: boolean
   load: () => Promise<void>
@@ -19,7 +25,7 @@ export const useSettings = create<SettingsStore>((setState, get) => ({
       const merged = { ...DEFAULT_SETTINGS, ...(stored as Partial<Settings>) }
       // Migrate non-chat models that can't stream (e.g. Groq prompt-guard).
       for (const p of Object.keys(merged.models) as (keyof Settings['models'])[]) {
-        if (/guard|whisper|tts|embed|rerank/i.test(merged.models[p])) {
+        if (NON_CHAT_MODEL.test(merged.models[p])) {
           merged.models[p] = DEFAULT_SETTINGS.models[p]
         }
       }

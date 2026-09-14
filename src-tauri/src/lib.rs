@@ -60,6 +60,7 @@ pub fn run() {
             fs::store_set,
             fs::path_dir,
             fs::path_join,
+            fs::workspace_search,
             secrets::secret_set,
             secrets::secret_delete,
             secrets::secret_status,
