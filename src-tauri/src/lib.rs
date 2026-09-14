@@ -64,7 +64,6 @@ pub fn run() {
             pick::pick_folder,
             pick::pick_file,
             pick::pick_save,
-            pick::debug_chan,
             tts::tts_available,
             tts::tts_voices,
             tts::tts_speak,

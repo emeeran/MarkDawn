@@ -29,7 +29,6 @@ async function openFile() {
 async function openFolder() {
   try {
     const dir = await pickFolder()
-    useToast.getState().show(`[dbg] picked: ${dir}`) // DEBUG
     if (dir) void useWorkspace.getState().openRoot(dir)
   } catch (e) {
     useToast.getState().show(`Open folder: ${e}`)

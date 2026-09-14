@@ -9,25 +9,11 @@ import type { AiEvent, AiStreamRequest, FileNode } from '../types'
  * JS (sync commands + Channels both work), so long-running commands are sync
  * fns in Rust that stream their outcome over a Channel.
  */
-/** DEBUG: file-based trace (survives no window-title/toast timing issues). */
-export async function dbg(line: string) {
-  const w = window as unknown as { __npdbg?: string }
-  w.__npdbg = (w.__npdbg ?? '') + `${new Date().toISOString().slice(11, 23)} ${line}\n`
-  await invoke('write_file', { path: '/tmp/np-debug.log', contents: w.__npdbg }).catch(() => {})
-}
-
 function cmdWithChannel<T>(cmd: string, args: Record<string, unknown> = {}): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const ch = new Channel<{ ok: boolean; value: T; error?: string }>()
-    ch.onmessage = (m) => {
-      void dbg(`${cmd} channel recv ok=${m.ok} value=${JSON.stringify(m.value)}`)
-      m.ok ? resolve(m.value) : reject(new Error(m.error ?? 'command failed'))
-    }
-    void dbg(`${cmd} invoking`)
-    invoke(cmd, { ...args, onResult: ch }).catch((e) => {
-      void dbg(`${cmd} invoke rejected: ${e}`)
-      reject(new Error(String(e)))
-    })
+    ch.onmessage = (m) => (m.ok ? resolve(m.value) : reject(new Error(m.error ?? 'command failed')))
+    invoke(cmd, { ...args, onResult: ch }).catch((e) => reject(new Error(String(e))))
   })
 }
 
@@ -39,11 +25,8 @@ function cmdWithChannel<T>(cmd: string, args: Record<string, unknown> = {}): Pro
 
 export async function pickFolder(): Promise<string | null> {
   try {
-    const r = await cmdWithChannel<string | null>('pick_folder')
-    void dbg(`pickFolder resolved ${JSON.stringify(r)}`)
-    return r
-  } catch (e) {
-    void dbg(`pickFolder failed: ${e} — falling back to plugin-dialog`)
+    return await cmdWithChannel<string | null>('pick_folder')
+  } catch {
     const d = await pluginOpen({ directory: true })
     return typeof d === 'string' ? d : null
   }
@@ -125,10 +108,6 @@ export const tauri = {
       invoke('ai_cancel', { id }).catch(() => {})
     }
   },
-}
-
-export function debugChannel(): Promise<string | null> {
-  return cmdWithChannel<string | null>('debug_chan')
 }
 
 export { convertFileSrc }

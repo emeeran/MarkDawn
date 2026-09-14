@@ -76,7 +76,6 @@ fn spawn_pick(kind: &'static str, default_name: Option<String>, on_result: Chann
             Ok(v) => Cmd { ok: true, value: v, error: None },
             Err(e) => Cmd { ok: false, value: None, error: Some(e) },
         };
-        eprintln!("[pick] outcome ok={} value={:?} err={:?}", out.ok, out.value, out.error);
         let _ = on_result.send(out);
     });
 }
@@ -94,10 +93,4 @@ pub fn pick_file(on_result: Channel<Cmd<Option<String>>>) {
 #[command]
 pub fn pick_save(default_name: String, on_result: Channel<Cmd<Option<String>>>) {
     spawn_pick("save", Some(default_name), on_result);
-}
-
-/// DEBUG: verify Channel delivery in this webview (call at boot).
-#[command]
-pub fn debug_chan(on_result: Channel<Cmd<Option<String>>>) {
-    let _ = on_result.send(Cmd { ok: true, value: Some("pong".into()), error: None });
 }

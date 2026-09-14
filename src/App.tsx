@@ -49,16 +49,9 @@ export function App() {
 
   // --- boot: settings, recents, native menu + backend events ---
   useEffect(() => {
-    void import('./lib/tauri').then(({ dbg }) => dbg('boot: app effect ran'))
     void settings.load()
     void useChat.getState().load()
     void tauri.recentGet().then(setRecents).catch(() => {})
-    // DEBUG: channel delivery probe at boot
-    void import('./lib/tauri').then(({ debugChannel }) =>
-      debugChannel()
-        .then((v) => { document.title = `NP: chan-ok ${v}` })
-        .catch((e) => { document.title = `NP: chan-err ${e}` }),
-    )
     const unlisteners = [
       listen<string>('open-path', (e) => void useTabs.getState().open(e.payload)),
       listen<string[]>('fs-changed', (e) => handleFsChanged(e.payload)),

@@ -8,13 +8,11 @@ import './themes/night.css'
 import './themes/newsprint.css'
 import './themes/pixyll.css'
 
-// Surface webview errors visibly (toast + title) instead of failing silently.
+// Surface webview errors visibly (toast) instead of failing silently.
 window.addEventListener('error', (e) => {
-  document.title = `ERR: ${e.message}`
   useToast.getState().show(`Error: ${e.message}`)
 })
 window.addEventListener('unhandledrejection', (e) => {
-  document.title = `REJ: ${e.reason}`
   useToast.getState().show(`Error: ${e.reason}`)
 })
 

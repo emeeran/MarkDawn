@@ -1,6 +1,5 @@
 import { create } from 'zustand'
-import { dbg, tauri } from '../lib/tauri'
-import { useToast } from './toast'
+import { tauri } from '../lib/tauri'
 import type { FileNode } from '../types'
 
 interface WorkspaceStore {
@@ -19,17 +18,11 @@ export const useWorkspace = create<WorkspaceStore>((setState, get) => ({
   expanded: new Set(),
 
   async openRoot(path) {
-    void dbg(`openRoot: start ${path}`)
-    try {
-      await tauri.watchStart(path)
-      void dbg('openRoot: watch ok')
-    } catch (e) {
-      void dbg(`openRoot: watch FAILED ${e}`)
-    }
+    // A failed watcher must not block opening the folder (e.g. inotify
+    // limits on huge trees) — degrade to unwatched.
+    await tauri.watchStart(path).catch(() => {})
     setState({ root: path, expanded: new Set([path]) })
     await get().refresh(path)
-    void dbg(`openRoot: tree ${get().tree.length} entries`)
-    useToast.getState().show(`[dbg] tree: ${get().tree.length} entries`) // DEBUG
   },
 
   closeRoot() {
