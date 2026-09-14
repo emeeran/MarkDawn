@@ -65,7 +65,6 @@ export const tauri = {
   recentClear: () => invoke<void>('recent_clear'),
   settingsGet: () => invoke<Record<string, unknown>>('settings_get'),
   settingsSet: (settings: unknown) => invoke<void>('settings_set', { settings }),
-  pathExists: (path: string) => invoke<boolean>('path_exists', { path }),
   pathDir: (path: string) => invoke<string>('path_dir', { path }),
   pathJoin: (dir: string, name: string) => invoke<string>('path_join', { dir, name }),
 

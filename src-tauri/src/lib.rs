@@ -49,7 +49,6 @@ pub fn run() {
             fs::settings_set,
             fs::store_get,
             fs::store_set,
-            fs::path_exists,
             fs::path_dir,
             fs::path_join,
             secrets::secret_set,

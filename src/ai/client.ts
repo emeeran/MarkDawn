@@ -2,10 +2,6 @@ import { tauri } from '../lib/tauri'
 import { useSettings } from '../stores/settings'
 import type { ChatMessage } from '../types'
 
-export interface StreamHandle {
-  cancel: () => void
-}
-
 /**
  * Start a streaming completion using the configured provider/model.
  * `onError` fires once; `onDelta` fires per token chunk.

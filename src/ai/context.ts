@@ -44,8 +44,3 @@ export function findSubstring(doc: string, sub: string): number {
   const i = doc.indexOf(sub)
   return i
 }
-
-/** Rough char-based token estimate for UI display only. */
-export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4)
-}

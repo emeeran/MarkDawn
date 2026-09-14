@@ -35,7 +35,7 @@ export function clearFormatting() {
   insertText(sel.replace(/(\*\*|__|\*|_|~~|`|==)/g, ''))
 }
 
-export const PARAGRAAPH_ACTIONS: Record<string, () => void> = {
+export const PARAGRAPH_ACTIONS: Record<string, () => void> = {
   'para.h1': () => insertLinePrefix('# '),
   'para.h2': () => insertLinePrefix('## '),
   'para.h3': () => insertLinePrefix('### '),

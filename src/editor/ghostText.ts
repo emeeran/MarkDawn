@@ -1,5 +1,5 @@
 import { stream } from '../ai/client'
-import { getSelection, readDomSelection } from '../ai/selection'
+import { readDomSelection } from '../ai/selection'
 import { GHOST_SYSTEM } from '../ai/prompts'
 import { getMarkdown } from './editBridge'
 
@@ -122,8 +122,4 @@ export function requestGhost(context: string, onDelta: (t: string) => void): { c
     },
     () => dismiss(),
   )
-}
-
-export function currentGhostRect() {
-  return getSelection().rect
 }

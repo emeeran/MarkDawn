@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isNoOp, wordDiff } from '../src/ai/diff'
+import { wordDiff } from '../src/ai/diff'
 
 describe('wordDiff', () => {
   it('returns no ops for identical text', () => {
@@ -44,11 +44,6 @@ describe('wordDiff', () => {
     const ops = wordDiff('a b c', 'x y z')
     expect(ops.filter((o) => o.type === 'del')).toHaveLength(1)
     expect(ops.filter((o) => o.type === 'add')).toHaveLength(1)
-  })
-
-  it('isNoOp ignores whitespace differences', () => {
-    expect(isNoOp('a  b\n', ' a b')).toBe(true)
-    expect(isNoOp('a b', 'a c')).toBe(false)
   })
 })
 

@@ -225,11 +225,6 @@ pub fn store_set(app: AppHandle, name: String, value: serde_json::Value) -> Resu
 }
 
 #[tauri::command]
-pub fn path_exists(path: String) -> bool {
-    Path::new(&path).exists()
-}
-
-#[tauri::command]
 pub fn path_dir(path: String) -> String {
     Path::new(&path)
         .parent()

@@ -56,9 +56,3 @@ function tokenize(s: string): string[] {
   // rather than on interchangeable space tokens.
   return s.match(/[^\s]+\s*|\s+/g) ?? []
 }
-
-/** True when the texts are identical after collapsing whitespace. */
-export function isNoOp(oldText: string, newText: string): boolean {
-  const norm = (t: string) => t.replace(/\s+/g, ' ').trim()
-  return norm(oldText) === norm(newText)
-}

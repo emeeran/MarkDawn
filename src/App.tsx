@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { ITocItem } from '@muyajs/core'
 import { setSelection } from './ai/selection'
 import { readAloud, stopReading } from './ai/tts'
-import { FORMAT_ACTIONS, PARAGRAAPH_ACTIONS } from './editor/inserts'
+import { FORMAT_ACTIONS, PARAGRAPH_ACTIONS } from './editor/inserts'
 import { MuyaEditor } from './editor/MuyaEditor'
 import { getCommands } from './commands/registry'
 import { tauri } from './lib/tauri'
@@ -88,7 +88,7 @@ export function App() {
   function dispatchMenuAction(id: string) {
     const s = useSettings.getState()
     const t = useTabs.getState()
-    if (id.startsWith('para.')) return void PARAGRAAPH_ACTIONS[id]?.()
+    if (id.startsWith('para.')) return void PARAGRAPH_ACTIONS[id]?.()
     if (id.startsWith('fmt.')) return void FORMAT_ACTIONS[id]?.()
     if (id.startsWith('theme:')) return s.set('theme', id.slice(6) as SettingsType['theme'])
     switch (id) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildContext, estimateTokens } from '../src/ai/context'
+import { buildContext } from '../src/ai/context'
 
 describe('buildContext', () => {
   it('returns the whole short doc untouched', () => {
@@ -33,12 +33,5 @@ describe('buildContext', () => {
     const ctx = buildContext(doc, '', { text: 'not in the doc', rect: null })
     expect(ctx.doc).toContain('The user has this text selected')
     expect(ctx.doc).toContain('not in the doc')
-  })
-})
-
-describe('estimateTokens', () => {
-  it('is roughly chars/4', () => {
-    expect(estimateTokens('abcd')).toBe(1)
-    expect(estimateTokens('a'.repeat(401))).toBe(101)
   })
 })
