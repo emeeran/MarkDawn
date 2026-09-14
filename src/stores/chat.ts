@@ -1,19 +1,38 @@
 import { create } from 'zustand'
 import { stream } from '../ai/client'
+import { tauri } from '../lib/tauri'
 import type { ChatMessage } from '../types'
+
+const STORE = 'chat-history'
 
 interface ChatStore {
   messages: ChatMessage[]
   streaming: boolean
   cancel: (() => void) | null
+  load: () => Promise<void>
   send: (system: string, messages: ChatMessage[], onDone?: (full: string) => void) => void
   clear: () => void
+}
+
+/** Persist after every terminal state so history survives restarts. */
+function persist(messages: ChatMessage[]) {
+  void tauri.storeSet(STORE, { messages }).catch(() => {})
 }
 
 export const useChat = create<ChatStore>((setState, get) => ({
   messages: [],
   streaming: false,
   cancel: null,
+
+  async load() {
+    try {
+      const stored = await tauri.storeGet(STORE)
+      const messages = (stored as { messages?: ChatMessage[] }).messages
+      if (Array.isArray(messages)) setState({ messages })
+    } catch {
+      /* fresh install */
+    }
+  },
 
   send(system, messages, onDone) {
     if (get().streaming) return
@@ -36,9 +55,9 @@ export const useChat = create<ChatStore>((setState, get) => ({
         const full = get().messages.at(-1)?.content ?? ''
         setState({ streaming: false, cancel: null })
         // Drop an empty assistant bubble (e.g. cancelled before first token).
-        if (!full.trim()) {
-          setState((s) => ({ messages: s.messages.slice(0, -1) }))
-        }
+        const msgs = full.trim() ? get().messages : get().messages.slice(0, -1)
+        if (!full.trim()) setState({ messages: msgs })
+        persist(msgs)
         onDone?.(full)
       },
       (message) => {
@@ -48,6 +67,7 @@ export const useChat = create<ChatStore>((setState, get) => ({
           if (last?.role === 'assistant') {
             msgs[msgs.length - 1] = { ...last, content: `⚠ ${message}` }
           }
+          persist(msgs)
           return { messages: msgs, streaming: false, cancel: null }
         })
       },
@@ -60,7 +80,9 @@ export const useChat = create<ChatStore>((setState, get) => ({
         setState((s) => {
           const last = s.messages.at(-1)
           const empty = last?.role === 'assistant' && !last.content.trim()
-          return { streaming: false, cancel: null, messages: empty ? s.messages.slice(0, -1) : s.messages }
+          const msgs = empty ? s.messages.slice(0, -1) : s.messages
+          persist(msgs)
+          return { streaming: false, cancel: null, messages: msgs }
         })
       },
     })
@@ -69,5 +91,6 @@ export const useChat = create<ChatStore>((setState, get) => ({
   clear() {
     get().cancel?.()
     setState({ messages: [], streaming: false, cancel: null })
+    persist([])
   },
 }))

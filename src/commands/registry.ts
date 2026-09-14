@@ -115,6 +115,14 @@ export function getCommands(): Command[] {
     cmd('ai.continue', 'AI → Continue writing', 'AI', continueWriting),
     cmd('ai.summarize', 'AI → Summarize document', 'AI', () => aiDocAction('Summarize this document as a concise Markdown outline.')),
     cmd('ai.actions', 'AI → Extract action items', 'AI', () => aiDocAction('Extract a Markdown checklist of action items from this document.')),
+    cmd('ai.chatClear', 'AI → Clear conversation', 'AI', () => {
+      void import('../stores/chat').then(({ useChat }) => useChat.getState().clear())
+    }, 'clear history'),
+
+    cmd('tts.doc', 'Read aloud → Document', 'Read Aloud', () => void import('../ai/tts').then(({ readAloud }) => readAloud('doc')), 'speak tts'),
+    cmd('tts.sel', 'Read aloud → Selection', 'Read Aloud', () => void import('../ai/tts').then(({ readAloud }) => readAloud('sel'))),
+    cmd('tts.cursor', 'Read aloud → From cursor', 'Read Aloud', () => void import('../ai/tts').then(({ readAloud }) => readAloud('cursor'))),
+    cmd('tts.stop', 'Read aloud → Stop', 'Read Aloud', () => void import('../ai/tts').then(({ stopReading }) => stopReading())),
 
     cmd('app.settings', 'Open settings…', 'App', () => window.dispatchEvent(new CustomEvent('notepad:open-settings')), 'preferences keys api'),
   ]

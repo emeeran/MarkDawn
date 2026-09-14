@@ -24,8 +24,18 @@ export const tauri = {
   secretStatus: () => invoke<Record<string, boolean>>('secret_status'),
 
   ollamaModels: (ollamaUrl?: string) => invoke<string[]>('ollama_models', { ollamaUrl }),
+  fetchModels: (provider: string, ollamaUrl?: string) =>
+    invoke<string[]>('fetch_models', { provider, ollamaUrl }),
   pandocAvailable: () => invoke<boolean>('pandoc_available'),
   exportPandoc: (src: string, format: string) => invoke<string>('export_pandoc', { src, format }),
+
+  ttsAvailable: () => invoke<boolean>('tts_available'),
+  ttsVoices: () => invoke<string[]>('tts_voices'),
+  ttsSpeak: (text: string, voice?: string) => invoke<void>('tts_speak', { text, voice }),
+  ttsStop: () => invoke<void>('tts_stop'),
+
+  storeGet: (name: string) => invoke<Record<string, unknown>>('store_get', { name }),
+  storeSet: (name: string, value: unknown) => invoke<void>('store_set', { name, value }),
 
   /**
    * Stream an AI completion. Returns a cancel function; keys never reach the

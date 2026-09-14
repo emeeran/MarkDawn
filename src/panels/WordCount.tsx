@@ -1,8 +1,10 @@
 import { useMemo } from 'react'
+import { useSettings } from '../stores/settings'
 import { useTabs } from '../stores/tabs'
 
 /** Typora-style word count: a quiet pill in the bottom-right corner. */
 export function WordCount() {
+  const show = useSettings((s) => s.showWordCount)
   const markdown = useTabs((s) => s.tabs.find((t) => t.id === s.activeId)?.markdown)
   const stats = useMemo(() => {
     const md = markdown ?? ''
@@ -12,7 +14,7 @@ export function WordCount() {
     return { words, chars, lines, empty: !markdown }
   }, [markdown])
 
-  if (stats.empty) return null
+  if (!show || stats.empty) return null
   return (
     <div className="word-count" title={`${stats.chars.toLocaleString()} characters · ${stats.lines.toLocaleString()} lines`}>
       {stats.words.toLocaleString()} words

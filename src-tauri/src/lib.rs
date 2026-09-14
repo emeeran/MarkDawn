@@ -3,6 +3,7 @@ mod export;
 mod fs;
 mod menu;
 mod secrets;
+mod tts;
 
 use tauri::{Emitter, Manager};
 
@@ -29,6 +30,7 @@ pub fn run() {
         })
         .manage(ai_proxy::abort_map())
         .manage(fs::watch_state())
+        .manage(tts::tts_state())
         .invoke_handler(tauri::generate_handler![
             fs::read_dir,
             fs::read_file,
@@ -43,6 +45,8 @@ pub fn run() {
             fs::recent_push,
             fs::settings_get,
             fs::settings_set,
+            fs::store_get,
+            fs::store_set,
             fs::path_exists,
             fs::path_dir,
             fs::path_join,
@@ -52,8 +56,13 @@ pub fn run() {
             ai_proxy::ai_stream,
             ai_proxy::ai_cancel,
             ai_proxy::ollama_models,
+            ai_proxy::fetch_models,
             export::pandoc_available,
             export::export_pandoc,
+            tts::tts_available,
+            tts::tts_voices,
+            tts::tts_speak,
+            tts::tts_stop,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Notepad");

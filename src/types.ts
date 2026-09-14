@@ -13,7 +13,7 @@ export interface Tab {
   markdown: string
 }
 
-export type ProviderId = 'anthropic' | 'openai' | 'ollama'
+export type ProviderId = 'anthropic' | 'openai' | 'groq' | 'ollama'
 
 export interface ChatMessage {
   role: 'user' | 'assistant'
@@ -49,6 +49,9 @@ export interface Settings {
   aiPanelOpen: boolean
   sidebarOpen: boolean
   sidebarTab: 'files' | 'outline'
+  sidebarWidth: number
+  showWordCount: boolean
+  ttsVoice: string
   provider: ProviderId
   models: Record<ProviderId, string>
   ollamaUrl: string
@@ -64,10 +67,14 @@ export const DEFAULT_SETTINGS: Settings = {
   aiPanelOpen: false,
   sidebarOpen: false,
   sidebarTab: 'files',
+  sidebarWidth: 240,
+  showWordCount: true,
+  ttsVoice: 'en-US-AriaNeural',
   provider: 'anthropic',
   models: {
     anthropic: 'claude-sonnet-5',
     openai: 'gpt-5.2',
+    groq: 'llama-3.3-70b-versatile',
     ollama: 'llama3.2',
   },
   ollamaUrl: 'http://localhost:11434',

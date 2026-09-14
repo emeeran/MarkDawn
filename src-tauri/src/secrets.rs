@@ -2,7 +2,7 @@ use keyring::Entry;
 use std::collections::BTreeMap;
 
 const SERVICE: &str = "app.notepad.editor.ai";
-const PROVIDERS: [&str; 3] = ["anthropic", "openai", "ollama"];
+const PROVIDERS: [&str; 4] = ["anthropic", "openai", "groq", "ollama"];
 
 fn entry(provider: &str) -> Result<Entry, String> {
     if !PROVIDERS.contains(&provider) {

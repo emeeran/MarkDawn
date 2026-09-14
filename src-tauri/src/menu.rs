@@ -77,6 +77,7 @@ fn export_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
 
 fn edit_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
     let m = Submenu::new(app, "Edit", true)?;
+    let read_aloud = read_aloud_menu(app)?;
     m.append_items(&[
         &PredefinedMenuItem::undo(app, None)?,
         &PredefinedMenuItem::redo(app, None)?,
@@ -87,6 +88,20 @@ fn edit_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
         &PredefinedMenuItem::select_all(app, None)?,
         &sep(app)?,
         &item(app, "edit.find", "Find / Replace…", Some("CmdOrCtrl+F"))?,
+        &sep(app)?,
+        &read_aloud,
+    ])?;
+    Ok(m)
+}
+
+fn read_aloud_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
+    let m = Submenu::new(app, "Read Aloud", true)?;
+    m.append_items(&[
+        &item(app, "tts.doc", "Read Document", None)?,
+        &item(app, "tts.sel", "Read Selection", None)?,
+        &item(app, "tts.cursor", "Read From Cursor", None)?,
+        &sep(app)?,
+        &item(app, "tts.stop", "Stop Reading", None)?,
     ])?;
     Ok(m)
 }
@@ -137,6 +152,7 @@ fn view_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
         &item(app, "view.sidebar", "File Tree", Some("CmdOrCtrl+Shift+L"))?,
         &item(app, "view.outline", "Outline", Some("Alt+CmdOrCtrl+O"))?,
         &item(app, "view.ai", "AI Panel", Some("CmdOrCtrl+Shift+A"))?,
+        &item(app, "view.chatClear", "Clear AI Conversation", None)?,
         &sep(app)?,
         &item(app, "view.palette", "Command Palette…", Some("CmdOrCtrl+K"))?,
         &item(app, "view.quickopen", "Quick Open…", Some("CmdOrCtrl+P"))?,

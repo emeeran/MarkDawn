@@ -188,7 +188,21 @@ pub fn recent_push(app: AppHandle, path: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn settings_get(app: AppHandle) -> Result<serde_json::Value, String> {
-    let path = config_path(&app, "settings.json")?;
+    store_get(app, "settings".into())
+}
+
+#[tauri::command]
+pub fn settings_set(app: AppHandle, settings: serde_json::Value) -> Result<(), String> {
+    store_set(app, "settings".into(), settings)
+}
+
+/// Generic named JSON store in the app config dir (settings, chat history, …).
+#[tauri::command]
+pub fn store_get(app: AppHandle, name: String) -> Result<serde_json::Value, String> {
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err("invalid store name".into());
+    }
+    let path = config_path(&app, &format!("{name}.json"))?;
     Ok(fs::read_to_string(path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -196,10 +210,12 @@ pub fn settings_get(app: AppHandle) -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-pub fn settings_set(app: AppHandle, settings: serde_json::Value) -> Result<(), String> {
-    let path = config_path(&app, "settings.json")?;
-    fs::write(&path, serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())
+pub fn store_set(app: AppHandle, name: String, value: serde_json::Value) -> Result<(), String> {
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err("invalid store name".into());
+    }
+    let path = config_path(&app, &format!("{name}.json"))?;
+    atomic_write(&path, &serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?)
 }
 
 #[tauri::command]

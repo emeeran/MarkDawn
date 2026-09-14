@@ -111,10 +111,83 @@ pub async fn ollama_models(ollama_url: Option<String>) -> Result<Vec<String>, St
         .unwrap_or_default())
 }
 
+/// List available models for a provider, powering the Settings model selector.
+#[tauri::command]
+pub async fn fetch_models(provider: String, ollama_url: Option<String>) -> Result<Vec<String>, String> {
+    match provider.as_str() {
+        "ollama" => ollama_models(ollama_url).await,
+        // OpenAI-compatible {data: [{id}]} shape.
+        "openai" => list_bearer_models("https://api.openai.com/v1/models", "openai").await,
+        "groq" => list_bearer_models("https://api.groq.com/openai/v1/models", "groq").await,
+        "anthropic" => {
+            let key = secrets::read_key("anthropic")?;
+            let resp = client()?
+                .get("https://api.anthropic.com/v1/models")
+                .header("x-api-key", &key)
+                .header("anthropic-version", "2023-06-01")
+                .timeout(Duration::from_secs(15))
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+            Ok(json["data"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|m| m["id"].as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default())
+        }
+        other => Err(format!("unknown provider: {other}")),
+    }
+}
+
+async fn list_bearer_models(url: &str, provider: &str) -> Result<Vec<String>, String> {
+    let key = secrets::read_key(provider)?;
+    let resp = client()?
+        .get(url)
+        .header("Authorization", format!("Bearer {key}"))
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("HTTP {status}: {}", truncate(&body, 300)));
+    }
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(json["data"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|m| m["id"].as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
 async fn stream(req: &AiRequest, ch: &Channel<AiEvent>) -> Result<(), String> {
     match req.provider.as_str() {
         "anthropic" => stream_anthropic(req, ch).await,
-        "openai" => stream_openai(req, ch).await,
+        "openai" => {
+            stream_openai_compatible(
+                "https://api.openai.com/v1/chat/completions",
+                "openai",
+                req,
+                ch,
+            ).await
+        }
+        // Groq speaks the OpenAI chat-completions protocol.
+        "groq" => {
+            stream_openai_compatible(
+                "https://api.groq.com/openai/v1/chat/completions",
+                "groq",
+                req,
+                ch,
+            ).await
+        }
         "ollama" => stream_ollama(req, ch).await,
         other => Err(format!("unknown provider: {other}")),
     }
@@ -188,9 +261,14 @@ async fn stream_anthropic(req: &AiRequest, ch: &Channel<AiEvent>) -> Result<(), 
     Ok(())
 }
 
-async fn stream_openai(req: &AiRequest, ch: &Channel<AiEvent>) -> Result<(), String> {
-    let key = secrets::read_key("openai")?;
-    let url = "https://api.openai.com/v1/chat/completions";
+/// OpenAI chat-completions protocol (OpenAI, Groq, and other compatible hosts).
+async fn stream_openai_compatible(
+    url: &str,
+    provider: &str,
+    req: &AiRequest,
+    ch: &Channel<AiEvent>,
+) -> Result<(), String> {
+    let key = secrets::read_key(provider)?;
     let mut messages: Vec<serde_json::Value> = Vec::new();
     if !req.system.is_empty() {
         messages.push(serde_json::json!({"role": "system", "content": req.system}));

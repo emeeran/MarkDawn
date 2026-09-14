@@ -3,6 +3,7 @@ import { open as openFileDialog } from '@tauri-apps/plugin-dialog'
 import { useEffect, useRef, useState } from 'react'
 import type { ITocItem } from '@muyajs/core'
 import { setSelection } from './ai/selection'
+import { readAloud, stopReading } from './ai/tts'
 import { FORMAT_ACTIONS, PARAGRAAPH_ACTIONS } from './editor/inserts'
 import { MuyaEditor } from './editor/MuyaEditor'
 import { getCommands } from './commands/registry'
@@ -16,6 +17,7 @@ import { SettingsDialog } from './panels/SettingsDialog'
 import { WordCount } from './panels/WordCount'
 import { TabsBar } from './panels/TabsBar'
 import { DiffPopover, SelectionActionBar } from './panels/TransformPopover'
+import { useChat } from './stores/chat'
 import { useSettings } from './stores/settings'
 import { useTabs } from './stores/tabs'
 import { useToast } from './stores/toast'
@@ -48,6 +50,7 @@ export function App() {
   // --- boot: settings, recents, native menu + backend events ---
   useEffect(() => {
     void settings.load()
+    void useChat.getState().load()
     void tauri.recentGet().then(setRecents).catch(() => {})
     const unlisteners = [
       listen<string>('open-path', (e) => void useTabs.getState().open(e.payload)),
@@ -94,6 +97,13 @@ export function App() {
         return s.set('sidebarTab', 'outline')
       }
       case 'view.ai': return s.set('aiPanelOpen', !s.aiPanelOpen)
+      case 'view.chatClear':
+        useChat.getState().clear()
+        return useToast.getState().show('AI conversation cleared')
+      case 'tts.doc': return void readAloud('doc')
+      case 'tts.sel': return void readAloud('sel')
+      case 'tts.cursor': return void readAloud('cursor')
+      case 'tts.stop': return stopReading()
       case 'view.palette': return setPalette('actions')
       case 'view.quickopen': return setPalette('files')
       case 'help.about': return useToast.getState().show('Notepad v0.1.0 — seamless Markdown with AI')
@@ -145,17 +155,42 @@ export function App() {
     }
   }
 
+  function startResize(e: React.MouseEvent) {
+    e.preventDefault()
+    const startX = e.clientX
+    const startW = useSettings.getState().sidebarWidth
+    const move = (ev: MouseEvent) => {
+      const w = Math.min(480, Math.max(160, startW + ev.clientX - startX))
+      useSettings.getState().set('sidebarWidth', w)
+    }
+    const up = () => {
+      window.removeEventListener('mousemove', move)
+      window.removeEventListener('mouseup', up)
+    }
+    window.addEventListener('mousemove', move)
+    window.addEventListener('mouseup', up)
+  }
+
   return (
     <div className="app">
       <div className="main-row">
         {settings.sidebarOpen && (
-          <div className="sidebar">
-            <div className="sidebar-tabs">
-              <button className={settings.sidebarTab === 'files' ? 'on' : ''} onClick={() => settings.set('sidebarTab', 'files')}>Files</button>
-              <button className={settings.sidebarTab === 'outline' ? 'on' : ''} onClick={() => settings.set('sidebarTab', 'outline')}>Outline</button>
+          <>
+            <div className="sidebar" style={{ width: settings.sidebarWidth, minWidth: settings.sidebarWidth }}>
+              <div className="sidebar-tabs">
+                <button className={settings.sidebarTab === 'files' ? 'on' : ''} onClick={() => settings.set('sidebarTab', 'files')}>Files</button>
+                <button className={settings.sidebarTab === 'outline' ? 'on' : ''} onClick={() => settings.set('sidebarTab', 'outline')}>Outline</button>
+                <button className="sidebar-fold" title="Fold sidebar (⌘⇧L)" onClick={() => settings.set('sidebarOpen', false)}>«</button>
+              </div>
+              {settings.sidebarTab === 'files' ? <FileTree /> : <Outline toc={toc} />}
             </div>
-            {settings.sidebarTab === 'files' ? <FileTree /> : <Outline toc={toc} />}
-          </div>
+            <div
+              className="sidebar-resize"
+              title="Drag to resize · double-click to fold"
+              onMouseDown={startResize}
+              onDoubleClick={() => settings.set('sidebarOpen', false)}
+            />
+          </>
         )}
 
         <div className="center">

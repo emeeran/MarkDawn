@@ -6,6 +6,7 @@ import type { ProviderId } from '../types'
 const PROVIDERS: { id: ProviderId; label: string; needsKey: boolean }[] = [
   { id: 'anthropic', label: 'Anthropic', needsKey: true },
   { id: 'openai', label: 'OpenAI', needsKey: true },
+  { id: 'groq', label: 'Groq', needsKey: true },
   { id: 'ollama', label: 'Ollama (local)', needsKey: false },
 ]
 
@@ -13,10 +14,13 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const settings = useSettings()
   const [keyStatus, setKeyStatus] = useState<Record<string, boolean>>({})
   const [keyDraft, setKeyDraft] = useState<Record<string, string>>({})
-  const [ollamaList, setOllamaList] = useState<string[]>([])
+  const [modelList, setModelList] = useState<string[]>([])
+  const [voiceList, setVoiceList] = useState<string[]>([])
+  const [ttsOk, setTtsOk] = useState<boolean | null>(null)
 
   useEffect(() => {
     void tauri.secretStatus().then(setKeyStatus)
+    void tauri.ttsAvailable().then(setTtsOk)
   }, [])
 
   async function saveKey(p: ProviderId) {
@@ -32,11 +36,20 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     setKeyStatus(await tauri.secretStatus())
   }
 
-  async function fetchOllamaModels() {
+  async function fetchModels() {
     try {
-      setOllamaList(await tauri.ollamaModels(settings.ollamaUrl))
+      setModelList(await tauri.fetchModels(settings.provider, settings.ollamaUrl))
     } catch (e) {
-      setOllamaList([])
+      setModelList([])
+      alert(String(e))
+    }
+  }
+
+  async function fetchVoices() {
+    try {
+      setVoiceList(await tauri.ttsVoices())
+    } catch (e) {
+      setVoiceList([])
       alert(String(e))
     }
   }
@@ -44,7 +57,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   return (
     <div className="modal-overlay" onMouseDown={onClose}>
       <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
-        <h2>Settings</h2>
+        <h2>Preferences</h2>
 
         <h3>Appearance</h3>
         <div className="settings-row">
@@ -63,6 +76,24 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           <span>{settings.fontSize}px</span>
         </div>
 
+        <h3>Layout</h3>
+        <div className="settings-col">
+          <label>
+            <input type="checkbox" checked={settings.showWordCount} onChange={(e) => settings.set('showWordCount', e.target.checked)} />
+            Show word count
+          </label>
+          <div className="settings-row">
+            <label>Sidebar width</label>
+            <input
+              type="range" min={160} max={480} value={settings.sidebarWidth}
+              onChange={(e) => settings.set('sidebarWidth', Number(e.target.value))}
+            />
+            <span>{settings.sidebarWidth}px</span>
+            <button onClick={() => settings.set('sidebarWidth', 240)}>Reset</button>
+          </div>
+          <small>Drag the sidebar edge to resize · double-click it (or ⌘⇧L) to fold.</small>
+        </div>
+
         <h3>Editor</h3>
         <div className="settings-col">
           <label><input type="checkbox" checked={settings.focusMode} onChange={(e) => settings.set('focusMode', e.target.checked)} /> Focus mode</label>
@@ -71,6 +102,20 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             <input type="checkbox" checked={settings.ghostText} onChange={(e) => settings.set('ghostText', e.target.checked)} />
             Ghost text autocomplete <small>(sends text to the configured provider while typing)</small>
           </label>
+        </div>
+
+        <h3>Read Aloud <small>{ttsOk === null ? '' : ttsOk ? '· edge-tts detected' : '· edge-tts not found (pip install edge-tts)'}</small></h3>
+        <div className="settings-row">
+          <label>Voice</label>
+          <input
+            list="tts-voices"
+            value={settings.ttsVoice}
+            onChange={(e) => settings.set('ttsVoice', e.target.value)}
+          />
+          <datalist id="tts-voices">
+            {voiceList.map((v) => <option key={v} value={v} />)}
+          </datalist>
+          <button onClick={() => void fetchVoices()}>Fetch voices</button>
         </div>
 
         <h3>AI</h3>
@@ -85,19 +130,19 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
         <div className="settings-row">
           <label>Model</label>
           <input
-            list="ollama-models"
+            list={`models-${settings.provider}`}
             value={settings.models[settings.provider]}
             onChange={(e) => settings.set('models', { ...settings.models, [settings.provider]: e.target.value })}
           />
-          <datalist id="ollama-models">
-            {ollamaList.map((m) => <option key={m} value={m} />)}
+          <datalist id={`models-${settings.provider}`}>
+            {modelList.map((m) => <option key={m} value={m} />)}
           </datalist>
+          <button onClick={() => void fetchModels()}>Fetch models</button>
         </div>
         {settings.provider === 'ollama' && (
           <div className="settings-row">
             <label>Server</label>
             <input value={settings.ollamaUrl} onChange={(e) => settings.set('ollamaUrl', e.target.value)} />
-            <button onClick={() => void fetchOllamaModels()}>Fetch models</button>
           </div>
         )}
 

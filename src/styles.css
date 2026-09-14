@@ -69,6 +69,15 @@ input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
   padding: 6px 0; color: var(--muted);
 }
 .sidebar-tabs button.on { color: var(--accent); box-shadow: inset 0 -2px var(--accent); font-weight: 600; }
+.sidebar-tabs .sidebar-fold { flex: 0 0 28px; }
+.sidebar-tabs .sidebar-fold:hover { color: var(--fg); }
+
+/* draggable fold handle between sidebar and editor */
+.sidebar-resize {
+  flex: 0 0 4px; cursor: col-resize;
+  background: transparent; margin: 0 -2px; z-index: 20;
+}
+.sidebar-resize:hover { background: color-mix(in srgb, var(--accent) 35%, transparent); }
 
 .tree-header { display: flex; align-items: center; gap: 4px; padding: 6px 8px; }
 .tree-root { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
