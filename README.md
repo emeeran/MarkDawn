@@ -6,7 +6,7 @@ A Typora-style seamless Markdown editor with AI built in. Tauri 2 + React + Type
 editor engine [Muya](https://github.com/marktext/muya) (`@muyajs/core` — the engine
 extracted from MarkText, the open-source Typora clone).
 
-![status](https://img.shields.io/badge/status-v0.1.0%20MVP-blue)
+![status](https://img.shields.io/badge/status-v0.1.2-blue)
 
 ## Run it
 
@@ -23,6 +23,10 @@ Optional: [pandoc](https://pandoc.org) on PATH enables Word/LaTeX/RTF/ODT/EPUB e
 local AI. [edge-tts](https://pypi.org/project/edge-tts/) (`pip install edge-tts`)
 enables read-aloud.
 
+Linux deb: `npm run deb` builds it and then patches the desktop entry to
+`Exec=markdawn %f` (Tauri omits `%f`, which breaks Open With → file) and registers
+`text/markdown` + `text/plain` mime types.
+
 ## Features
 
 **Editor (Typora parity)**
@@ -37,15 +41,16 @@ enables read-aloud.
   typewriter mode, window position/size persisted across restarts
 - Command palette (⌘K) + quick file open (⌘P) + reopen closed tab (⌘⇧T)
 - Images: paste or drag-drop onto the editor (stored in `<doc>_assets/`, referenced
-  document-relative — portable Markdown), or insert via picker
+  document-relative — portable Markdown), or insert via picker (picked files are
+  referenced in place, not copied into the assets folder)
 - Export: HTML (self-contained, themed), PDF (print pipeline), DOCX/ODT/LaTeX/RTF/EPUB
-  (pandoc; never overwrites an existing destination)
-- Drag `.md` files onto the window to open them; `notepad foo.md` works on first launch
+  (pandoc) — every export refuses to overwrite an existing destination
+- Drag `.md` files onto the window to open them; `markdawn foo.md` works on first launch
 
 **AI**
 - Provider-agnostic: Anthropic, OpenAI, Groq, Ollama (local). Keys live **only in the
   OS keychain** — they never reach the webview or settings.json; all HTTP runs in Rust
-- Chat sidebar with real multi-turn memory (last 10 turns ride along), document
+- Chat sidebar with multi-turn memory (the last 10 messages ride along), document
   context (head/tail truncation around the selection), document outline, and
   workspace `NOTEPAD.md` injected as writing instructions
 - Select text → floating quick actions (improve, grammar, shorter, longer, bullets,
@@ -56,14 +61,16 @@ enables read-aloud.
   the app)
 
 **Typora-style UI**: native menu bar (File / Edit / Paragraph / Format / View /
-Themes / Help), chromeless window, word count pill in the corner, seamless
+Themes / Help), native window chrome, word count pill in the corner, seamless
 centered page, source mode (⌘/).
 
-**Shortcuts** (all in the native menu): ⌘K palette · ⌘P quick open · ⌘F find ·
-⌥⌘F workspace search · ⌘S save · ⌘N new · ⌘W close tab · ⌘⇧T reopen tab · ⌘, preferences ·
-⌘/ source mode · ⌘⇧F focus mode · ⌘⌥T typewriter · ⌘⇧L file tree · ⌘⇧A AI panel ·
-⌘1–⌘6 headings · ⌘B bold · ⌘I italic · ⌘⇧Q quote · ⌘⇧7/8/9 lists ·
-⌘⇧K code block · ⌘⇧M math block · ⌘⇧T table
+**Shortcuts** (all in the native menu; ⌘ = Ctrl on Linux/Windows): ⌘N new · ⌘O open ·
+⇧⌘O open folder · ⌘S save · ⇧⌘S save as · ⌘W close tab · ⌘⇧T reopen tab · ⌘, preferences ·
+⌘K palette · ⌘P quick open · ⌘F find · ⌥⌘F workspace search · ⌘/ source mode · ⌘⇧F focus ·
+⌥⌘T typewriter · ⌥⌘G ghost text · ⌘⇧L file tree · ⌥⌘O outline · ⌘⇧A AI panel ·
+⌘=/⌘-/⌘0 text size · ⌘1–⌘6 headings · ⌘B bold · ⌘I italic · ⌘⇧C inline code ·
+⌥⇧5 strikethrough · ⌘\\ clear formatting · ⌘⇧Q quote · ⌘⇧7/8/9 lists ·
+⌘⇧K code block · ⌘⇧M math block · ⌥⇧T table
 
 ## Architecture
 
@@ -82,6 +89,9 @@ src-tauri/               Rust core
     │                    image import, recovery saves
     ├── secrets.rs       keychain (set/delete/status only — never readable from JS)
     ├── ai_proxy.rs      streaming SSE/NDJSON proxy: anthropic | openai | groq | ollama
+    ├── tts.rs           edge-tts read-aloud (synth + player children, stoppable)
+    ├── menu.rs          native menu bar (every item emits one `menu-action` id)
+    ├── pick.rs          file pickers (zenity → kdialog, dialog-plugin fallback)
     ├── lifecycle.rs     quit interception (flush handoff), startup file args
     └── export.rs        pandoc
 ```
@@ -94,7 +104,8 @@ paste event for multi-block Markdown, native `execCommand` for inline text).
 
 ```sh
 npm run typecheck        # tsc --noEmit
-npm test                 # vitest: tabs store, chat memory, word-diff, context, prompts
+npm test                 # vitest: tabs store, chat memory, word-diff, context, prompts,
+                         #   settings
 cd src-tauri && cargo test   # stream parsers, fs guard, atomic writes, URL allowlist
 ```
 
@@ -112,8 +123,8 @@ GitHub Actions runs all three on push/PR (`.github/workflows/ci.yml`).
   not re-validated
 - The `xdg-open` read-aloud fallback hands playback to the desktop default app, so
   Stop can't kill that specific player (install mpv/ffplay for stoppable playback)
-- Chat context carries the last 10 turns; document bodies in document mode are
-  truncated to a 12k-char budget
+- Chat context carries the last 10 messages (~5 exchanges); document bodies in
+  document mode are truncated to a 12k-char budget
 - Ollama server URLs are restricted to loopback/private hosts (SSRF guard) — a
   publicly-hosted Ollama endpoint won't work
 - Updater not wired (needs signing keys + a release server); `tauri-plugin-updater`
@@ -125,8 +136,9 @@ GitHub Actions runs all three on push/PR (`.github/workflows/ci.yml`).
 - CSP enabled (script-src 'self'; no inline scripts); chat/model output rendered
   through Muya's DOMPurify-sanitized renderer
 - All fs commands are confined to user-consented roots (workspace, picked/dropped
-  paths, app dirs); `path_join` rejects traversal; image rendering uses the asset
-  protocol scoped at runtime to the same roots
+  paths, app dirs); `path_join` rejects traversal; images render through data-URL
+  transforms (the asset-protocol scope is widened only on consent and is not the
+  render path on WebKitGTK)
 - Prompt injection: document text, selection, and `NOTEPAD.md` are sent to the model
   verbatim and its output can be applied with one click — treat opened files from
   untrusted sources accordingly (this is inherent to editor-AI integration)

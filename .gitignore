@@ -7,3 +7,4 @@ test-results/
 
 # tauri-build generated capability schemas (regenerated on every compile)
 src-tauri/gen/
+local/

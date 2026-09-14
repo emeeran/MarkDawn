@@ -126,7 +126,7 @@ fn paragraph_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
         &sep(app)?,
         &item(app, "para.code", "Code Block", Some("CmdOrCtrl+Shift+K"))?,
         &item(app, "para.math", "Math Block", Some("CmdOrCtrl+Shift+M"))?,
-        &item(app, "para.table", "Table", Some("CmdOrCtrl+Shift+T"))?,
+        &item(app, "para.table", "Table", Some("Alt+Shift+T"))?,
         &item(app, "para.hr", "Horizontal Rule", None)?,
     ])?;
     Ok(m)

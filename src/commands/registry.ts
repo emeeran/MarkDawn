@@ -68,6 +68,10 @@ body{max-width:800px;margin:0 auto;padding:48px 24px;line-height:1.6}
     return null
   })
   if (!path) return
+  // Match pandoc's export guard: refuse to clobber an existing destination.
+  if (await tauri.readFile(path).then(() => true).catch(() => false)) {
+    return useToast.getState().show(`Export: ${path} already exists — remove or rename it first`)
+  }
   try {
     await tauri.fsAllow(path)
     await tauri.writeFile(path, html)

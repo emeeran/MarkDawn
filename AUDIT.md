@@ -1,5 +1,10 @@
 # Production Readiness Audit — 2026-09-14
 
+> Historical snapshot taken before the hardening pass. The CSP, asset-protocol
+> scope, FsGuard confinement, flush-on-quit, tabs-store test, and CI blockers
+> listed below have since been fixed (see `README.md` / `CLAUDE.md`); the
+> unchecked boxes do not reflect the current tree.
+
 Scope: full repo review by six independent audit passes (correctness/error-handling, security,
 config/environment, observability, testing/CI, operational readiness). Findings merged and
 deduplicated; severity is the highest assigned by any pass.

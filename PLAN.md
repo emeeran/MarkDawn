@@ -1,5 +1,8 @@
 # Notepad — a Typora replacement with AI integration
 
+> Historical: the original build plan (shipped as **MarkDawn**, v0.1.2). Current
+> behavior is documented in `README.md`, `USER_MANUAL.md`, and `CLAUDE.md`.
+
 Comprehensive build plan. Target: a fast, minimal, Typora-parity Markdown editor
 (WYSIWYG, no split pane) for macOS/Windows/Linux, with AI writing features built in.
 
