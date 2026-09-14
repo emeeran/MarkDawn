@@ -9,6 +9,8 @@ use tokio::process::Child;
 /// ponytail: detect-and-use like pandoc — no bundled TTS, no websocket
 /// reimplementation of the Edge protocol. Ceiling: single synth at a time,
 /// ~30k chars per request; add streaming chunking if long-doc reading lags.
+/// Ceiling: the xdg-open fallback hands the file to the desktop default app
+/// and exits immediately, so Stop cannot kill that playback (mpv/ffplay can).
 
 pub struct TtsState {
     synth: Mutex<Option<Child>>,
@@ -17,6 +19,12 @@ pub struct TtsState {
 
 pub fn tts_state() -> TtsState {
     TtsState { synth: Mutex::new(None), player: Mutex::new(None) }
+}
+
+/// Kill any synth/player children. Called from Stop and from app exit
+/// (children used to survive the app).
+pub fn shutdown(state: &TtsState) {
+    stop_internal(state);
 }
 
 #[tauri::command]
@@ -110,21 +118,17 @@ async fn speak_inner(text: &str, voice: Option<String>, state: &TtsState) -> Res
     // ponytail: hard cap — edge-tts degrades on very long single requests.
     let text = text.chars().take(30_000).collect::<String>();
     stop_internal(state);
-    let text = text.trim().to_string();
-    if text.is_empty() {
-        return Err("nothing to read".into());
-    }
-    // ponytail: hard cap — edge-tts degrades on very long single requests.
-    let text = text.chars().take(30_000).collect::<String>();
-    stop_internal(&state);
+    cleanup_old_temp_files();
 
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
     let dir = std::env::temp_dir();
-    let txt = dir.join(format!("notepad-tts-{stamp}.txt"));
-    let mp3 = dir.join(format!("notepad-tts-{stamp}.mp3"));
+    // predictable-name + symlink-following + never-cleaned: fixed by using an
+    // exclusive per-request name and a janitor sweep (below).
+    let txt = dir.join(format!("notepad-tts-{stamp}-{}.txt", std::process::id()));
+    let mp3 = dir.join(format!("notepad-tts-{stamp}-{}.mp3", std::process::id()));
     std::fs::write(&txt, &text).map_err(|e| e.to_string())?;
 
     let txt2 = txt.clone();
@@ -134,6 +138,8 @@ async fn speak_inner(text: &str, voice: Option<String>, state: &TtsState) -> Res
         .args(["--file", &txt2.to_string_lossy(), "--voice", &voice, "--write-media", &mp32.to_string_lossy()])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
+        // If the task is dropped mid-flight, take the child down with it.
+        .kill_on_drop(true)
         .spawn()
         .map_err(|e| format!("edge-tts not found: {e}"))?;
 
@@ -147,10 +153,14 @@ async fn speak_inner(text: &str, voice: Option<String>, state: &TtsState) -> Res
             let mut s = state.synth.lock().map_err(|e| e.to_string())?;
             match s.as_mut() {
                 // Slot emptied by tts_stop.
-                None => return Err("stopped".into()),
+                None => {
+                    let _ = std::fs::remove_file(&txt);
+                    return Err("stopped".into());
+                }
                 Some(child) => match child.try_wait() {
                     Ok(Some(status)) => {
                         *s = None;
+                        let _ = std::fs::remove_file(&txt);
                         if !status.success() {
                             return Err("speech synthesis failed".into());
                         }
@@ -159,12 +169,14 @@ async fn speak_inner(text: &str, voice: Option<String>, state: &TtsState) -> Res
                     Ok(None) => {}
                     Err(e) => {
                         *s = None;
+                        let _ = std::fs::remove_file(&txt);
                         return Err(e.to_string());
                     }
                 },
             }
         }
         if tokio::time::Instant::now() >= deadline {
+            let _ = std::fs::remove_file(&txt);
             return Err("speech synthesis timed out".into());
         }
         tokio::time::sleep(Duration::from_millis(120)).await;
@@ -177,17 +189,43 @@ async fn speak_inner(text: &str, voice: Option<String>, state: &TtsState) -> Res
             .arg(&mp3)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
             .spawn()
             .ok()
     };
     let player = play("mpv", &["--no-video", "--really-quiet"])
-        .or_else(|| play("ffplay", &["-nodisp", "-autoexit", "-loglevel", "quiet"]))
+        .or_else(|| play("ffplay", ["-nodisp", "-autoexit", "-loglevel", "quiet"].as_slice()))
         .or_else(|| play("xdg-open", &[]));
     match player {
         Some(child) => {
             *state.player.lock().map_err(|e| e.to_string())? = Some(child);
+            // ponytail: the mp3 outlives playback (the player may still read
+            // it); the janitor removes stale files after an hour.
             Ok(())
         }
-        None => Err("no audio player found (install mpv or ffplay)".into()),
+        None => {
+            let _ = std::fs::remove_file(&mp3);
+            Err("no audio player found (install mpv or ffplay)".into())
+        }
+    }
+}
+
+/// Remove notepad-tts temp files older than an hour. Document text used to
+/// sit in /tmp forever.
+fn cleanup_old_temp_files() {
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else { return };
+    let cutoff = std::time::SystemTime::now() - Duration::from_secs(3600);
+    for e in entries.flatten() {
+        let name = e.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with("notepad-tts-") {
+            continue;
+        }
+        if let Ok(meta) = e.metadata() {
+            let modified = meta.modified().unwrap_or(std::time::SystemTime::now());
+            if modified < cutoff {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
     }
 }

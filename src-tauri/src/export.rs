@@ -27,7 +27,8 @@ pub fn export_pandoc(src: String, format: String, on_result: Channel<Cmd<String>
 }
 
 async fn run_pandoc(src: String, format: String) -> Result<String, String> {
-    const FORMATS: [&str; 7] = ["docx", "rtf", "odt", "latex", "rst", "epub", "org"];
+    // Keep in sync with the Export menu/registry — only expose what the UI offers.
+    const FORMATS: [&str; 5] = ["docx", "rtf", "odt", "latex", "epub"];
     if !FORMATS.contains(&format.as_str()) {
         return Err(format!("unsupported format: {format}"));
     }
@@ -35,6 +36,10 @@ async fn run_pandoc(src: String, format: String) -> Result<String, String> {
         Some((stem, _)) => format!("{stem}.{format}"),
         None => format!("{src}.{format}"),
     };
+    // Never silently clobber an existing file the user may care about.
+    if std::path::Path::new(&dest).exists() {
+        return Err(format!("{dest} already exists — remove or rename it first"));
+    }
     let dest2 = dest.clone();
     let out = tokio::task::spawn_blocking(move || {
         std::process::Command::new("pandoc")

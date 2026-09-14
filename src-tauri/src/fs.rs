@@ -3,7 +3,7 @@ use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -43,10 +43,116 @@ pub(crate) fn atomic_write(path: &Path, contents: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Confinement: which paths the webview may touch through fs commands.
+/// Seeded with the app's own config/data dirs; grown via `fs_allow` when the
+/// user picks a file/folder, opens a workspace, or drops/launches into a file.
+/// Without this, any script in the webview reads/writes the whole disk.
+pub struct FsGuard {
+    roots: Arc<Mutex<Vec<PathBuf>>>,
+}
+
+pub fn fs_guard() -> FsGuard {
+    FsGuard { roots: Arc::new(Mutex::new(Vec::new())) }
+}
+
+/// Lexical cleanup of `.` and `..` without requiring the path to exist.
+fn normalize(p: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+fn is_within(root: &Path, p: &Path) -> bool {
+    p.starts_with(root)
+}
+
+/// Best-effort canonicalization: falls back to canonicalizing the deepest
+/// existing ancestor, so not-yet-created files resolve against a real root.
+/// ponytail: lexical normalize + ancestor canonicalize does not follow
+/// symlinks that appear *after* allowance; re-canonicalize if that threat
+/// model ever matters.
+fn canonicalize_best_effort(p: &Path) -> PathBuf {
+    if let Ok(c) = p.canonicalize() {
+        return c;
+    }
+    let mut anc = p.to_path_buf();
+    while let Some(parent) = anc.parent() {
+        if let Ok(c) = parent.canonicalize() {
+            return c.join(anc.file_name().unwrap_or_default());
+        }
+        anc = parent.to_path_buf();
+    }
+    normalize(p)
+}
+
+impl FsGuard {
+    fn allow(&self, path: &Path) {
+        let c = canonicalize_best_effort(path);
+        if let Ok(mut roots) = self.roots.lock() {
+            if !roots.contains(&c) {
+                roots.push(c);
+            }
+        }
+    }
+
+    fn check(&self, path: &Path) -> Result<(), String> {
+        let c = canonicalize_best_effort(path);
+        let roots = self.roots.lock().map_err(|e| e.to_string())?;
+        if roots.iter().any(|r| is_within(r, &c)) {
+            Ok(())
+        } else {
+            Err(format!("path outside the allowed scope: {}", path.display()))
+        }
+    }
+}
+
+/// Allow a path for both fs commands and the asset protocol (image display).
+/// Called by the frontend after any user-consented pick/drop/launch.
 #[tauri::command]
-pub fn read_dir(path: String) -> Result<Vec<FileNode>, String> {
+pub fn fs_allow(app: AppHandle, path: String) -> Result<(), String> {
+    let p = PathBuf::from(&path);
+    let guard = app.state::<FsGuard>();
+    guard.allow(&p);
+    let c = canonicalize_best_effort(&p);
+    // Display-time image resolution goes through asset:// — extend its scope
+    // too (recursive so `<doc>_assets/` subdirectories resolve).
+    let scope = app.asset_protocol_scope();
+    if c.is_dir() {
+        let _ = scope.allow_directory(&c, true);
+        guard.allow(&c); // read_dir on the folder itself
+    } else {
+        let _ = scope.allow_file(&c);
+        if let Some(parent) = c.parent() {
+            let _ = scope.allow_directory(parent, true);
+            guard.allow(parent);
+        }
+    }
+    Ok(())
+}
+
+/// Seed the guard with the app's own storage so settings/chat stores work
+/// before any file is opened. Called once from setup.
+pub fn seed_guard(app: &AppHandle) {
+    let guard = app.state::<FsGuard>();
+    for dir in [app.path().app_config_dir().ok(), app.path().app_data_dir().ok()].into_iter().flatten() {
+        guard.allow(&dir);
+    }
+}
+
+#[tauri::command]
+pub fn read_dir(path: String, guard: State<'_, FsGuard>) -> Result<Vec<FileNode>, String> {
+    let p = PathBuf::from(&path);
+    guard.check(&p)?;
     let mut nodes: Vec<FileNode> = Vec::new();
-    for entry in fs::read_dir(&path).map_err(|e| e.to_string())? {
+    for entry in fs::read_dir(&p).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         let name = entry.file_name().to_string_lossy().to_string();
         if name.starts_with('.') {
@@ -64,36 +170,134 @@ pub fn read_dir(path: String) -> Result<Vec<FileNode>, String> {
 }
 
 #[tauri::command]
-pub fn read_file(path: String) -> Result<String, String> {
-    fs::read_to_string(&path).map_err(|e| e.to_string())
+pub fn read_file(path: String, guard: State<'_, FsGuard>) -> Result<String, String> {
+    let p = PathBuf::from(&path);
+    guard.check(&p)?;
+    fs::read_to_string(&p).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn write_file(path: String, contents: String) -> Result<(), String> {
-    atomic_write(Path::new(&path), &contents)
+pub fn write_file(path: String, contents: String, guard: State<'_, FsGuard>) -> Result<(), String> {
+    let p = PathBuf::from(&path);
+    guard.check(&p)?;
+    atomic_write(&p, &contents)
 }
 
 #[tauri::command]
-pub fn create_file(path: String) -> Result<(), String> {
-    if Path::new(&path).exists() {
+pub fn create_file(path: String, guard: State<'_, FsGuard>) -> Result<(), String> {
+    let p = PathBuf::from(&path);
+    guard.check(&p)?;
+    if p.exists() {
         return Err("file already exists".into());
     }
-    fs::write(&path, "").map_err(|e| e.to_string())
+    fs::write(&p, "").map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn create_dir(path: String) -> Result<(), String> {
-    fs::create_dir_all(&path).map_err(|e| e.to_string())
+pub fn create_dir(path: String, guard: State<'_, FsGuard>) -> Result<(), String> {
+    let p = PathBuf::from(&path);
+    guard.check(&p)?;
+    fs::create_dir_all(&p).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn rename(path: String, new_path: String) -> Result<(), String> {
-    fs::rename(&path, &new_path).map_err(|e| e.to_string())
+pub fn rename(path: String, new_path: String, guard: State<'_, FsGuard>) -> Result<(), String> {
+    let p = PathBuf::from(&path);
+    let np = PathBuf::from(&new_path);
+    guard.check(&p)?;
+    guard.check(&np)?;
+    fs::rename(&p, &np).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn trash_path(path: String) -> Result<(), String> {
-    trash::delete(&path).map_err(|e| e.to_string())
+pub fn trash_path(path: String, guard: State<'_, FsGuard>) -> Result<(), String> {
+    let p = PathBuf::from(&path);
+    guard.check(&p)?;
+    trash::delete(&p).map_err(|e| e.to_string())
+}
+
+/// Copy a dropped/picked image into `<doc>_assets/` next to the document and
+/// return the portable relative path for the Markdown.
+#[tauri::command]
+pub fn image_import(app: AppHandle, doc_dir: String, src: String) -> Result<String, String> {
+    let dir = PathBuf::from(&doc_dir);
+    app.state::<FsGuard>().check(&dir)?;
+    let src_path = PathBuf::from(&src);
+    app.state::<FsGuard>().check(&src_path)?;
+    let ext = src_path
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .filter(|e| ["png", "jpg", "jpeg", "gif", "svg", "webp"].contains(&e.as_str()))
+        .ok_or_else(|| "unsupported image type".to_string())?;
+    import_image_inner(&dir, ext, |dest| fs::copy(&src_path, dest).map(|_| ()).map_err(|e| e.to_string()))
+}
+
+/// Write a pasted (clipboard) image into `<doc>_assets/`; `bytes` is the raw
+/// encoded image (png/jpeg/…), not raw pixels.
+#[tauri::command]
+pub fn image_save_bytes(
+    app: AppHandle,
+    doc_dir: String,
+    ext: String,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
+    let dir = PathBuf::from(&doc_dir);
+    app.state::<FsGuard>().check(&dir)?;
+    let ext = ext.to_lowercase();
+    if !["png", "jpg", "jpeg", "gif", "svg", "webp"].contains(&ext.as_str()) {
+        return Err("unsupported image type".into());
+    }
+    import_image_inner(&dir, ext, |dest| fs::write(dest, bytes.as_slice()).map_err(|e| e.to_string()))
+}
+
+fn import_image_inner(
+    doc_dir: &Path,
+    ext: String,
+    write: impl Fn(&Path) -> Result<(), String>,
+) -> Result<String, String> {
+    let stem = doc_dir
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "document".into());
+    let assets = doc_dir.join(format!("{stem}_assets"));
+    fs::create_dir_all(&assets).map_err(|e| e.to_string())?;
+    for i in 0..10_000u32 {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let name = if i == 0 {
+            format!("image-{stamp}.{ext}")
+        } else {
+            format!("image-{stamp}-{i}.{ext}")
+        };
+        let dest = assets.join(&name);
+        if !dest.exists() {
+            write(&dest)?;
+            // Make the new image renderable (and guard-allowed) immediately.
+            return Ok(format!("{stem}_assets/{name}"));
+        }
+    }
+    Err("could not find a free image name".into())
+}
+
+/// Last-resort save for dirty *untitled* tabs during quit (nothing to save
+/// them to). Goes to app-data/recovery/, never touches user folders.
+#[tauri::command]
+pub fn save_recovery(app: AppHandle, title: String, contents: String) -> Result<String, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("recovery");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let safe: String = title
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    let path = dir.join(format!("{safe}-{stamp}.md"));
+    fs::write(&path, contents).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
 }
 
 /// Watch a workspace root and emit debounced `fs-changed` events.
@@ -103,8 +307,12 @@ pub fn watch_start(
     app: AppHandle,
     root: String,
     state: State<'_, Mutex<WatchState>>,
+    guard: State<'_, FsGuard>,
 ) -> Result<(), String> {
-    let app = app.clone();
+    let root_path = PathBuf::from(&root);
+    guard.check(&root_path)?;
+    guard.allow(&root_path);
+    let app2 = app.clone();
     let (tx, rx) = mpsc::channel::<std::path::PathBuf>();
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         if let Ok(event) = res {
@@ -115,13 +323,17 @@ pub fn watch_start(
     })
     .map_err(|e| e.to_string())?;
     watcher
-        .watch(Path::new(&root), RecursiveMode::Recursive)
+        .watch(&root_path, RecursiveMode::Recursive)
         .map_err(|e| e.to_string())?;
 
     let mut st = state.lock().map_err(|e| e.to_string())?;
     st.watcher = Some(watcher); // dropping the old one un-watches it
-    st.root = Some(PathBuf::from(&root));
+    st.root = Some(root_path);
     drop(st);
+
+    // Watched trees may contain images the editor renders — allow the whole
+    // asset scope for the workspace (recursive).
+    let _ = app2.asset_protocol_scope().allow_directory(&canonicalize_best_effort(Path::new(&root)), true);
 
     // Collector thread: batch paths, emit at most every 300 ms of quiet.
     std::thread::spawn(move || {
@@ -130,15 +342,15 @@ pub fn watch_start(
             match rx.recv_timeout(Duration::from_millis(300)) {
                 Ok(path) => {
                     let s = path.to_string_lossy().to_string();
-                    // Ignore our own atomic-write temp files.
-                    if !s.contains(".tmp") {
+                    // Ignore our own atomic-write temp files (`.name.tmp`).
+                    if !is_own_temp_file(&s) {
                         pending.push(s);
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     if !pending.is_empty() {
                         pending.dedup();
-                        let _ = app.emit("fs-changed", &pending);
+                        let _ = app2.emit("fs-changed", &pending);
                         pending.clear();
                     }
                 }
@@ -147,6 +359,15 @@ pub fn watch_start(
         }
     });
     Ok(())
+}
+
+/// True only for our atomic-write temp files (`.anything.tmp`), not for
+/// legitimate files that merely contain ".tmp" somewhere in the name.
+fn is_own_temp_file(path: &str) -> bool {
+    path.rsplit(['/', '\\'])
+        .next()
+        .map(|name| name.starts_with('.') && name.ends_with(".tmp"))
+        .unwrap_or(false)
 }
 
 #[tauri::command]
@@ -182,14 +403,14 @@ pub fn recent_push(app: AppHandle, path: String) -> Result<(), String> {
     list.retain(|p| p != &path);
     list.insert(0, path);
     list.truncate(15);
-    fs::write(&file, serde_json::to_string(&list).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())
+    // Atomic: a crash mid-write used to truncate the whole recents file.
+    atomic_write(&file, &serde_json::to_string(&list).map_err(|e| e.to_string())?)
 }
 
 #[tauri::command]
 pub fn recent_clear(app: AppHandle) -> Result<(), String> {
     let file = config_path(&app, "recent.json")?;
-    fs::write(&file, "[]").map_err(|e| e.to_string())
+    atomic_write(&file, "[]")
 }
 
 #[tauri::command]
@@ -205,10 +426,7 @@ pub fn settings_set(app: AppHandle, settings: serde_json::Value) -> Result<(), S
 /// Generic named JSON store in the app config dir (settings, chat history, …).
 #[tauri::command]
 pub fn store_get(app: AppHandle, name: String) -> Result<serde_json::Value, String> {
-    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-        return Err("invalid store name".into());
-    }
-    let path = config_path(&app, &format!("{name}.json"))?;
+    let path = config_path(&app, &store_file_name(&name)?)?;
     Ok(fs::read_to_string(path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -217,11 +435,15 @@ pub fn store_get(app: AppHandle, name: String) -> Result<serde_json::Value, Stri
 
 #[tauri::command]
 pub fn store_set(app: AppHandle, name: String, value: serde_json::Value) -> Result<(), String> {
+    let path = config_path(&app, &store_file_name(&name)?)?;
+    atomic_write(&path, &serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?)
+}
+
+fn store_file_name(name: &str) -> Result<String, String> {
     if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return Err("invalid store name".into());
     }
-    let path = config_path(&app, &format!("{name}.json"))?;
-    atomic_write(&path, &serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?)
+    Ok(format!("{name}.json"))
 }
 
 #[tauri::command]
@@ -232,19 +454,35 @@ pub fn path_dir(path: String) -> String {
         .unwrap_or_default()
 }
 
+/// Join a *single* filename onto a directory. The name is a component, not a
+/// path: separators and `..` are rejected (they were a traversal primitive).
 #[tauri::command]
-pub fn path_join(dir: String, name: String) -> String {
-    PathBuf::from(&dir).join(name).to_string_lossy().to_string()
+pub fn path_join(dir: String, name: String) -> Result<String, String> {
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains('\0')
+    {
+        return Err(format!("invalid file name: {name}"));
+    }
+    Ok(PathBuf::from(&dir).join(name).to_string_lossy().to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn tmpdir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("notepad-test-{name}-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
     #[test]
     fn atomic_write_never_leaves_temp_files() {
-        let dir = std::env::temp_dir().join("notepad-test-atomic");
-        fs::create_dir_all(&dir).unwrap();
+        let dir = tmpdir("atomic");
         let target = dir.join("doc.md");
         fs::write(&target, "old").unwrap();
 
@@ -264,13 +502,68 @@ mod tests {
 
     #[test]
     fn atomic_write_overwrites_repeatedly() {
-        let dir = std::env::temp_dir().join("notepad-test-atomic2");
-        fs::create_dir_all(&dir).unwrap();
+        let dir = tmpdir("atomic2");
         let target = dir.join("doc.md");
         for i in 0..25 {
             atomic_write(&target, &format!("v{i}")).unwrap();
             assert_eq!(fs::read_to_string(&target).unwrap(), format!("v{i}"));
         }
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn normalize_resolves_dotdot_lexically() {
+        let p = normalize(Path::new("/ws/sub/../other/f.md"));
+        assert_eq!(p, PathBuf::from("/ws/other/f.md"));
+        // Escaping above root collapses to root, never reverses.
+        assert_eq!(normalize(Path::new("/ws/../../etc")), PathBuf::from("/etc"));
+    }
+
+    #[test]
+    fn guard_allows_within_and_blocks_outside() {
+        let ws = tmpdir("guard-ws");
+        let outside = tmpdir("guard-out");
+        let g = FsGuard { roots: Arc::new(Mutex::new(Vec::new())) };
+        g.allow(&ws);
+
+        assert!(g.check(&ws.join("note.md")).is_ok());
+        assert!(g.check(&ws.join("sub/dir/deep.md")).is_ok());
+        // Traversal that resolves back inside is fine; outside is not.
+        assert!(g.check(&ws.join("../guard-out/secret.md")).is_err());
+        assert!(g.check(&outside.join("secret.md")).is_err());
+
+        // Allowing a file covers its parent dir too (save-as-adjacent flows).
+        let f = ws.join("doc.md");
+        g.allow(&f);
+        assert!(g.check(&ws.join("other.md")).is_ok());
+
+        fs::remove_dir_all(&ws).unwrap();
+        fs::remove_dir_all(&outside).unwrap();
+    }
+
+    #[test]
+    fn temp_file_filter_matches_only_our_pattern() {
+        assert!(is_own_temp_file("/ws/.doc.md.tmp"));
+        assert!(is_own_temp_file("/ws/.x.tmp"));
+        assert!(!is_own_temp_file("/ws/notes.backup.tmp")); // starts without dot
+        assert!(!is_own_temp_file("/ws/my.tmp.notes.md")); // contains, not suffix
+        assert!(!is_own_temp_file("/ws/.hidden"));
+    }
+
+    #[test]
+    fn path_join_rejects_traversal_and_separators() {
+        assert_eq!(path_join("/ws".into(), "a.md".into()).unwrap(), "/ws/a.md");
+        assert!(path_join("/ws".into(), "../escape.md".into()).is_err());
+        assert!(path_join("/ws".into(), "sub/a.md".into()).is_err());
+        assert!(path_join("/ws".into(), "a\\b.md".into()).is_err());
+        assert!(path_join("/ws".into(), "..".into()).is_err());
+        assert!(path_join("/ws".into(), String::new()).is_err());
+    }
+
+    #[test]
+    fn store_name_is_validated() {
+        assert!(store_file_name("chat-history").is_ok());
+        assert!(store_file_name("../etc/passwd").is_err());
+        assert!(store_file_name("a b").is_err());
     }
 }

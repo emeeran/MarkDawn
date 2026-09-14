@@ -1,12 +1,13 @@
 mod ai_proxy;
 mod export;
 mod fs;
+mod lifecycle;
 mod menu;
 mod pick;
 mod secrets;
 mod tts;
 
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, RunEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -26,13 +27,18 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
-            menu::install(&app.handle())?;
+            let handle = app.handle().clone();
+            menu::install(&handle)?;
+            fs::seed_guard(&handle);
+            lifecycle::init_startup_files();
             Ok(())
         })
-        .manage(ai_proxy::abort_map())
+        .manage(ai_proxy::streams())
         .manage(fs::watch_state())
+        .manage(fs::fs_guard())
         .manage(tts::tts_state())
         .invoke_handler(tauri::generate_handler![
+            fs::fs_allow,
             fs::read_dir,
             fs::read_file,
             fs::write_file,
@@ -40,6 +46,9 @@ pub fn run() {
             fs::create_dir,
             fs::rename,
             fs::trash_path,
+            fs::image_import,
+            fs::image_save_bytes,
+            fs::save_recovery,
             fs::watch_start,
             fs::watch_stop,
             fs::recent_get,
@@ -67,7 +76,21 @@ pub fn run() {
             tts::tts_voices,
             tts::tts_speak,
             tts::tts_stop,
+            lifecycle::startup_files,
+            lifecycle::quit_now,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Notepad");
+        .build(tauri::generate_context!())
+        .expect("error while building Notepad")
+        .run(|app, event| {
+            if let RunEvent::ExitRequested { code, ref api, .. } = event {
+                lifecycle::handle_exit_requested(app, code, api);
+            }
+            if let RunEvent::Exit = event {
+                // Children (synth/player) used to outlive the app.
+                if let Some(w) = app.get_webview_window("main") {
+                    let state = w.app_handle().state::<tts::TtsState>();
+                    tts::shutdown(&state);
+                }
+            }
+        });
 }

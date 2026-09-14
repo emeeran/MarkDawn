@@ -56,6 +56,7 @@ fn file_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
         &item(app, "app.settings", "Preferences…", Some("CmdOrCtrl+,"))?,
         &sep(app)?,
         &item(app, "file.closeTab", "Close Tab", Some("CmdOrCtrl+W"))?,
+        &item(app, "file.reopenTab", "Reopen Closed Tab", Some("Shift+CmdOrCtrl+T"))?,
         &PredefinedMenuItem::quit(app, None)?,
     ])?;
     Ok(m)
@@ -68,6 +69,7 @@ fn export_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
         &item(app, "export.pdf", "PDF…", None)?,
         &sep(app)?,
         &item(app, "export.docx", "Word (.docx)…", None)?,
+        &item(app, "export.odt", "OpenDocument (.odt)…", None)?,
         &item(app, "export.latex", "LaTeX…", None)?,
         &item(app, "export.rtf", "RTF…", None)?,
         &item(app, "export.epub", "EPUB…", None)?,
@@ -88,6 +90,7 @@ fn edit_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
         &PredefinedMenuItem::select_all(app, None)?,
         &sep(app)?,
         &item(app, "edit.find", "Find / Replace…", Some("CmdOrCtrl+F"))?,
+        &item(app, "edit.searchWorkspace", "Search in Workspace…", Some("Alt+CmdOrCtrl+F"))?,
         &sep(app)?,
         &read_aloud,
     ])?;
@@ -152,7 +155,7 @@ fn view_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
         &item(app, "view.sidebar", "File Tree", Some("CmdOrCtrl+Shift+L"))?,
         &item(app, "view.outline", "Outline", Some("Alt+CmdOrCtrl+O"))?,
         &item(app, "view.ai", "AI Panel", Some("CmdOrCtrl+Shift+A"))?,
-        &item(app, "view.chatClear", "Clear AI Conversation", None)?,
+        &item(app, "ai.chatClear", "Clear AI Conversation", None)?,
         &sep(app)?,
         &item(app, "view.palette", "Command Palette…", Some("CmdOrCtrl+K"))?,
         &item(app, "view.quickopen", "Quick Open…", Some("CmdOrCtrl+P"))?,
@@ -163,6 +166,8 @@ fn view_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
 fn themes_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
     let m = Submenu::new(app, "Themes", true)?;
     m.append_items(&[
+        &item(app, "theme:auto", "Auto (light/dark)", None)?,
+        &sep(app)?,
         &item(app, "theme:github", "GitHub", None)?,
         &item(app, "theme:night", "Night", None)?,
         &item(app, "theme:newsprint", "Newsprint", None)?,
@@ -173,6 +178,6 @@ fn themes_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
 
 fn help_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
     let m = Submenu::new(app, "Help", true)?;
-    m.append_items(&[&item(app, "help.about", "About Notepad", None)?])?;
+    m.append_items(&[&item(app, "app.about", "About Notepad", None)?])?;
     Ok(m)
 }
