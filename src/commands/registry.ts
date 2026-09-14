@@ -135,5 +135,6 @@ export function getCommands(): Command[] {
     cmd('tts.stop', 'Read aloud → Stop', 'Read Aloud', () => void import('../ai/tts').then(({ stopReading }) => stopReading())),
 
     cmd('app.settings', 'Open settings…', 'App', () => window.dispatchEvent(new CustomEvent('notepad:open-settings')), 'preferences keys api'),
+    cmd('app.clearRecents', 'Clear recent history', 'App', () => window.dispatchEvent(new CustomEvent('notepad:clear-recents')), 'recents recent files clear'),
   ]
 }

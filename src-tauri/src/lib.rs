@@ -44,6 +44,7 @@ pub fn run() {
             fs::watch_stop,
             fs::recent_get,
             fs::recent_push,
+            fs::recent_clear,
             fs::settings_get,
             fs::settings_set,
             fs::store_get,

@@ -187,6 +187,12 @@ pub fn recent_push(app: AppHandle, path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn recent_clear(app: AppHandle) -> Result<(), String> {
+    let file = config_path(&app, "recent.json")?;
+    fs::write(&file, "[]").map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn settings_get(app: AppHandle) -> Result<serde_json::Value, String> {
     store_get(app, "settings".into())
 }

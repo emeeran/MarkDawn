@@ -73,12 +73,15 @@ export function App() {
       setDiff({ action, extra, key: Date.now() })
     }
     const onOpenSettings = () => setSettingsOpen(true)
+    const onClearRecents = () => clearRecents()
     window.addEventListener('notepad:transform', onTransform)
     window.addEventListener('notepad:open-settings', onOpenSettings)
+    window.addEventListener('notepad:clear-recents', onClearRecents)
     return () => {
       unlisteners.forEach((u) => void u.then((f) => f()))
       window.removeEventListener('notepad:transform', onTransform)
       window.removeEventListener('notepad:open-settings', onOpenSettings)
+      window.removeEventListener('notepad:clear-recents', onClearRecents)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -130,6 +133,11 @@ export function App() {
         if (cmd) cmd.run()
       }
     }
+  }
+
+  function clearRecents() {
+    setRecents([])
+    void tauri.recentClear().catch((e) => useToast.getState().show(`Clear recents: ${e}`))
   }
 
   function handleFsChanged(paths: string[]) {
@@ -236,7 +244,7 @@ export function App() {
               <MuyaEditor key={activeTab.id} tab={activeTab} onInput={onInput} onSelection={onSelection} />
             )
           ) : (
-            <Welcome recents={recents} />
+            <Welcome recents={recents} onClearRecents={clearRecents} />
           )}
           {selStable && selUi.text && !diff && !settings.sourceMode && (
             <SelectionActionBar
@@ -272,7 +280,7 @@ export function App() {
   )
 }
 
-function Welcome({ recents }: { recents: string[] }) {
+function Welcome({ recents, onClearRecents }: { recents: string[]; onClearRecents: () => void }) {
   const tabs = useTabs()
   const workspace = useWorkspace()
   return (
@@ -307,7 +315,10 @@ function Welcome({ recents }: { recents: string[] }) {
       </div>
       {recents.length > 0 && (
         <div className="welcome-recents">
-          <h3>Recent</h3>
+          <div className="welcome-recents-head">
+            <h3>Recent</h3>
+            <button title="Clear recent history" onClick={onClearRecents}>Clear</button>
+          </div>
           {recents.slice(0, 8).map((r) => (
             <div key={r} className="welcome-recent" onClick={() => void tabs.open(r)} title={r}>
               {r.split(/[\\/]/).pop()}

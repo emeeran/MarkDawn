@@ -79,6 +79,7 @@ export const tauri = {
   watchStop: () => invoke<void>('watch_stop'),
   recentGet: () => invoke<string[]>('recent_get'),
   recentPush: (path: string) => invoke<void>('recent_push', { path }),
+  recentClear: () => invoke<void>('recent_clear'),
   settingsGet: () => invoke<Record<string, unknown>>('settings_get'),
   settingsSet: (settings: unknown) => invoke<void>('settings_set', { settings }),
   pathExists: (path: string) => invoke<boolean>('path_exists', { path }),

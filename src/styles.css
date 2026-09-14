@@ -143,7 +143,9 @@ input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
 .welcome p { color: var(--muted); margin: 0 0 16px; }
 .welcome-actions { display: flex; gap: 8px; }
 .welcome-recents { margin-top: 36px; width: 420px; }
-.welcome-recents h3 { color: var(--muted); font-weight: 400; }
+.welcome-recents-head { display: flex; align-items: center; justify-content: space-between; }
+.welcome-recents-head h3 { color: var(--muted); font-weight: 400; margin: 0 0 4px; }
+.welcome-recents-head button { font-size: 11px; padding: 1px 8px; color: var(--muted); }
 .welcome-recent { padding: 4px 8px; border-radius: 4px; cursor: pointer; display: flex; justify-content: space-between; gap: 12px; }
 .welcome-recent:hover { background: var(--panel-bg); }
 .recent-path { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; }
