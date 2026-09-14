@@ -123,8 +123,8 @@ input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
   font-size: var(--editor-font-size);
   background: var(--bg); color: var(--fg);
 }
-/* Muya surface theming hooks */
-.editor-host .mu-editor { padding: 40px 60px; max-width: 900px; margin: 0 auto; }
+/* Muya surface theming hooks — seamless page, generous top whitespace */
+.editor-host .mu-editor { padding: 56px 60px 40vh; max-width: 860px; margin: 0 auto; }
 
 .welcome {
   flex: 1; display: flex; flex-direction: column; align-items: center;
@@ -218,16 +218,35 @@ input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
 }
 .ghost-overlay::after { content: ' ⇥'; color: var(--muted); font-size: 11px; }
 
-/* ---------- status bar ---------- */
-.status-bar {
-  display: flex; justify-content: space-between; align-items: center;
-  border-top: 1px solid var(--border); background: var(--panel-bg);
-  padding: 3px 12px; font-size: 11px; color: var(--muted);
+/* ---------- word count pill (Typora-style, bottom-right) ---------- */
+.word-count {
+  position: fixed; bottom: 10px; right: 14px; z-index: 30;
+  font-size: 11px; color: var(--muted);
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  border-radius: 10px; padding: 2px 10px;
+  pointer-events: none;
+  backdrop-filter: blur(4px);
 }
-.status-bar button { border: none; background: transparent; color: var(--muted); font-size: 11px; padding: 0 4px; }
-.status-bar button.on { color: var(--accent); font-weight: 600; }
-.status-right { display: flex; gap: 10px; align-items: center; }
-.status-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- source mode ---------- */
+.source-editor {
+  flex: 1; width: 100%; resize: none; border: none; outline: none;
+  padding: 56px 60px;
+  background: var(--bg); color: var(--fg);
+  font-family: var(--mono);
+  font-size: calc(var(--editor-font-size) * 0.9);
+  line-height: 1.6;
+}
+
+/* ---------- thin quiet scrollbars ---------- */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg) 18%, transparent);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--fg) 30%, transparent); }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
 
 /* ---------- palette / modal / toast ---------- */
 .palette-overlay, .modal-overlay {
@@ -280,7 +299,7 @@ input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
 .editor-host:focus-within .muya-editor .paragraph-active { opacity: 1; }
 
 @media print {
-  .sidebar, .ai-panel, .tabs-bar, .status-bar, .find-bar, .banner,
+  .sidebar, .ai-panel, .tabs-bar, .word-count, .find-bar, .banner,
   .transform-popover, .diff-popover, .toast, .palette-overlay, .modal-overlay { display: none !important; }
   .app, .main-row, .center { display: block; height: auto; overflow: visible; }
   .editor-host { overflow: visible; }

@@ -1,6 +1,7 @@
 mod ai_proxy;
 mod export;
 mod fs;
+mod menu;
 mod secrets;
 
 use tauri::{Emitter, Manager};
@@ -22,6 +23,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        .setup(|app| {
+            menu::install(&app.handle())?;
+            Ok(())
+        })
         .manage(ai_proxy::abort_map())
         .manage(fs::watch_state())
         .invoke_handler(tauri::generate_handler![

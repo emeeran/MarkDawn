@@ -45,6 +45,7 @@ export interface Settings {
   focusMode: boolean
   typewriterMode: boolean
   ghostText: boolean
+  sourceMode: boolean
   aiPanelOpen: boolean
   sidebarOpen: boolean
   sidebarTab: 'files' | 'outline'
@@ -59,8 +60,9 @@ export const DEFAULT_SETTINGS: Settings = {
   focusMode: false,
   typewriterMode: false,
   ghostText: false,
-  aiPanelOpen: true,
-  sidebarOpen: true,
+  sourceMode: false,
+  aiPanelOpen: false,
+  sidebarOpen: false,
   sidebarTab: 'files',
   provider: 'anthropic',
   models: {

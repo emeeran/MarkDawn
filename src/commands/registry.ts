@@ -98,6 +98,7 @@ export function getCommands(): Command[] {
     cmd('view.focus', `${settings.focusMode ? '✓ ' : ''}Focus mode`, 'View', () => settings.set('focusMode', !settings.focusMode)),
     cmd('view.typewriter', `${settings.typewriterMode ? '✓ ' : ''}Typewriter mode`, 'View', () => settings.set('typewriterMode', !settings.typewriterMode)),
     cmd('view.ghost', `${settings.ghostText ? '✓ ' : ''}Ghost text autocomplete`, 'View', () => settings.set('ghostText', !settings.ghostText), 'autocomplete ai inline'),
+    cmd('view.source', `${settings.sourceMode ? '✓ ' : ''}Source mode`, 'View', () => settings.set('sourceMode', !settings.sourceMode), 'raw markdown'),
     ...(['github', 'night', 'newsprint', 'pixyll'] as const).map((t) =>
       cmd(`theme.${t}`, `Theme: ${t}`, 'View', () => settings.set('theme', t), 'appearance'),
     ),

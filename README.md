@@ -41,8 +41,15 @@ local AI.
 - Ghost-text autocomplete (Tab to accept) — **off by default**
 - `NOTEPAD.md` in the workspace root is auto-sent as writing instructions
 
-**Shortcuts**: ⌘K palette · ⌘P files · ⌘F find · ⌘S save · ⌘N new · ⌘W close ·
-⌘B sidebar · ⌘/ AI panel · ⌘⇧F focus · ⌘⌥T typewriter · ⌘, settings
+**Typora-style UI**: native menu bar (File / Edit / Paragraph / Format / View /
+Themes / Help), chromeless window, word count pill in the corner, seamless
+centered page, source mode (⌘/).
+
+**Shortcuts** (all in the native menu): ⌘K palette · ⌘P quick open · ⌘F find ·
+⌘S save · ⌘N new · ⌘W close tab · ⌘, preferences · ⌘/ source mode ·
+⌘⇧F focus mode · ⌘⌥T typewriter · ⌘⇧L file tree · ⌘⇧A AI panel ·
+⌘1–⌘6 headings · ⌘B bold · ⌘I italic · ⌘⇧Q quote · ⌘⇧7/8/9 lists ·
+⌘⇧K code block · ⌘⇧M math block · ⌘⇧T table
 
 ## Architecture
 

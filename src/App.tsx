@@ -1,8 +1,11 @@
 import { listen } from '@tauri-apps/api/event'
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { ITocItem } from '@muyajs/core'
 import { setSelection } from './ai/selection'
+import { FORMAT_ACTIONS, PARAGRAAPH_ACTIONS } from './editor/inserts'
 import { MuyaEditor } from './editor/MuyaEditor'
+import { getCommands } from './commands/registry'
 import { tauri } from './lib/tauri'
 import { ChatPanel } from './panels/ChatPanel'
 import { CommandPalette } from './panels/CommandPalette'
@@ -10,14 +13,14 @@ import { FileTree } from './panels/FileTree'
 import { FindBar } from './panels/FindBar'
 import { Outline } from './panels/Outline'
 import { SettingsDialog } from './panels/SettingsDialog'
-import { StatusBar } from './panels/StatusBar'
+import { WordCount } from './panels/WordCount'
 import { TabsBar } from './panels/TabsBar'
 import { DiffPopover, SelectionActionBar } from './panels/TransformPopover'
 import { useSettings } from './stores/settings'
 import { useTabs } from './stores/tabs'
 import { useToast } from './stores/toast'
 import { useWorkspace } from './stores/workspace'
-import type { ITocItem } from '@muyajs/core'
+import type { SelectionInfo, Settings as SettingsType } from './types'
 
 interface DiffRequest {
   action: string
@@ -35,14 +38,14 @@ export function App() {
   const [palette, setPalette] = useState<null | 'actions' | 'files'>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [recents, setRecents] = useState<string[]>([])
-  const [selUi, setSelUi] = useState<{ text: string; rect: import('./types').SelectionInfo['rect'] }>({ text: '', rect: null })
+  const [selUi, setSelUi] = useState<{ text: string; rect: SelectionInfo['rect'] }>({ text: '', rect: null })
   const [diff, setDiff] = useState<DiffRequest | null>(null)
   const selStableTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [selStable, setSelStable] = useState(false)
 
   const activeTab = tabs.find((t) => t.id === activeId) ?? null
 
-  // --- boot ---
+  // --- boot: settings, recents, native menu + backend events ---
   useEffect(() => {
     void settings.load()
     void tauri.recentGet().then(setRecents).catch(() => {})
@@ -54,6 +57,8 @@ export function App() {
         setDiff({ ...e.payload, key: Date.now() })
       }),
       listen('notepad:open-settings', () => setSettingsOpen(true)),
+      // Native menu (accelerators live Rust-side; no duplicate JS keybindings).
+      listen<string>('menu-action', (e) => dispatchMenuAction(e.payload)),
     ]
     return () => { unlisteners.forEach((u) => void u.then((f) => f())) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -65,32 +70,42 @@ export function App() {
     document.documentElement.style.setProperty('--editor-font-size', `${settings.fontSize}px`)
   }, [settings.theme, settings.fontSize])
 
-  // --- keyboard ---
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey
-      if (!mod) return
-      const key = e.key.toLowerCase()
-      const t = useTabs.getState()
-      const s = useSettings.getState()
-      if (key === 'k') { e.preventDefault(); setPalette('actions') }
-      else if (key === 'p') { e.preventDefault(); setPalette('files') }
-      else if (key === 'f' && e.shiftKey) { e.preventDefault(); s.set('focusMode', !s.focusMode) }
-      else if (key === 'f') { e.preventDefault(); setFindOpen(true) }
-      else if (key === 's') { e.preventDefault(); void t.saveActive() }
-      else if (key === 'n' && !e.shiftKey) { e.preventDefault(); t.openUntitled() }
-      else if (key === 'w') { e.preventDefault(); if (t.activeId) void t.close(t.activeId) }
-      else if (key === ',') { e.preventDefault(); setSettingsOpen(true) }
-      else if (key === 'b') { e.preventDefault(); s.set('sidebarOpen', !s.sidebarOpen) }
-      else if (key === 't' && e.altKey) { e.preventDefault(); s.set('typewriterMode', !s.typewriterMode) }
-      else if (key === '/') { e.preventDefault(); s.set('aiPanelOpen', !s.aiPanelOpen) }
+  function dispatchMenuAction(id: string) {
+    const s = useSettings.getState()
+    const t = useTabs.getState()
+    if (id.startsWith('para.')) return void PARAGRAAPH_ACTIONS[id]?.()
+    if (id.startsWith('fmt.')) return void FORMAT_ACTIONS[id]?.()
+    if (id.startsWith('theme:')) return s.set('theme', id.slice(6) as SettingsType['theme'])
+    switch (id) {
+      case 'file.new': return t.openUntitled()
+      case 'file.save': return void t.saveActive()
+      case 'file.saveAs': return void t.saveActiveAs()
+      case 'file.closeTab': return t.activeId ? void t.close(t.activeId) : undefined
+      case 'edit.find': return setFindOpen((v) => !v)
+      case 'view.source': {
+        if (s.sourceMode) setSelection({ text: '', rect: null })
+        return s.set('sourceMode', !s.sourceMode)
+      }
+      case 'view.focus': return s.set('focusMode', !s.focusMode)
+      case 'view.typewriter': return s.set('typewriterMode', !s.typewriterMode)
+      case 'view.sidebar': return s.set('sidebarOpen', !s.sidebarOpen)
+      case 'view.outline': {
+        s.set('sidebarOpen', true)
+        return s.set('sidebarTab', 'outline')
+      }
+      case 'view.ai': return s.set('aiPanelOpen', !s.aiPanelOpen)
+      case 'view.palette': return setPalette('actions')
+      case 'view.quickopen': return setPalette('files')
+      case 'help.about': return useToast.getState().show('Notepad v0.1.0 — seamless Markdown with AI')
+      default: {
+        // file.open / file.openFolder / app.settings / export.* live in the registry
+        const cmd = getCommands().find((c) => c.id === id)
+        if (cmd) cmd.run()
+      }
     }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [])
+  }
 
   function handleFsChanged(paths: string[]) {
-    // refresh tree dirs
     const dirs = new Set(paths.map((p) => p.split(/[\\/]/).slice(0, -1).join('/')).filter(Boolean))
     dirs.forEach((d) => void useWorkspace.getState().refresh(d))
 
@@ -112,14 +127,13 @@ export function App() {
     if (active?.path) void tauri.readFile(active.path).then((md) => t.markSaved(active.id, md)).catch(() => {})
   }
 
-  // --- editor callbacks ---
   function onInput(markdown: string, nextToc: ITocItem[]) {
     if (activeId) setContent(activeId, markdown)
     setToc(nextToc)
     setSelStable(false)
   }
 
-  function onSelection(sel: import('./types').SelectionInfo) {
+  function onSelection(sel: SelectionInfo) {
     setSelUi({ text: sel.text, rect: sel.rect })
     clearTimeout(selStableTimer.current)
     if (sel.text) {
@@ -130,11 +144,6 @@ export function App() {
       if (!diff) setSelection(sel)
     }
   }
-
-  const wordCount = useMemo(
-    () => (activeTab?.markdown ?? '').split(/\s+/).filter(Boolean).length,
-    [activeTab?.markdown],
-  )
 
   return (
     <div className="app">
@@ -162,11 +171,22 @@ export function App() {
           )}
           {findOpen && <FindBar onClose={() => setFindOpen(false)} />}
           {activeTab ? (
-            <MuyaEditor key={activeTab.id} tab={activeTab} onInput={onInput} onSelection={onSelection} />
+            settings.sourceMode ? (
+              <textarea
+                className="source-editor"
+                autoFocus
+                spellCheck={false}
+                value={activeTab.markdown}
+                onChange={(e) => { if (activeId) setContent(activeId, e.target.value) }}
+                onKeyDown={(e) => { if (e.key === 'Escape') settings.set('sourceMode', false) }}
+              />
+            ) : (
+              <MuyaEditor key={activeTab.id} tab={activeTab} onInput={onInput} onSelection={onSelection} />
+            )
           ) : (
             <Welcome recents={recents} />
           )}
-          {selStable && selUi.text && !diff && (
+          {selStable && selUi.text && !diff && !settings.sourceMode && (
             <SelectionActionBar
               rect={selUi.rect}
               onAction={(action, extra) => {
@@ -175,7 +195,7 @@ export function App() {
               }}
             />
           )}
-          {diff && (
+          {diff && !settings.sourceMode && (
             <DiffPopover
               key={diff.key}
               request={{ action: diff.action, extra: diff.extra }}
@@ -192,7 +212,7 @@ export function App() {
         )}
       </div>
 
-      <StatusBar wordCount={wordCount} />
+      <WordCount />
       {toast && <div className="toast">{toast}</div>}
       {palette && <CommandPalette mode={palette} onClose={() => setPalette(null)} />}
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
