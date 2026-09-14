@@ -99,25 +99,68 @@ export function MuyaEditor({ tab, onInput, onSelection }: Props) {
       return docPath.split(/[\\/]/).slice(0, -1).join('/')
     }
     const insertImageMarkdown = (rel: string) => insertText(`![image](<${rel}>)`)
+
+    /** Import a user-consented source file into the doc assets, then insert. */
+    function importFile(docDir: string, src: string) {
+      // A paste/drop is user consent — allow the source, then let imageImport
+      // pass its own guard.
+      void tauri
+        .fsAllow(src)
+        .then(() => tauri.imageImport(docDir, src))
+        .then(insertImageMarkdown)
+        .catch((err) => useToast.getState().show(`Image paste: ${err}`))
+    }
+
+    /**
+     * File paths for copied images, from every clipboard shape file managers
+     * use: uri-list lines, GNOME's `copy\Nfile://…`, or a bare path in
+     * text/plain (WebKitGTK often exposes ONLY the last one).
+     */
+    function imagePathsFromClipboard(e: ClipboardEvent): string[] {
+      const raw = [
+        e.clipboardData?.getData('text/uri-list') ?? '',
+        e.clipboardData?.getData('x-special/gnome-copied-files') ?? '',
+        e.clipboardData?.getData('text/plain') ?? '',
+      ].join('\n')
+      const ext = /\.(png|jpe?g|gif|webp|svg)$/i
+      const out = new Set<string>()
+      for (const line of raw.split(/[\r\n]+/)) {
+        const trimmed = line.trim()
+        if (!trimmed || /^copy$/i.test(trimmed)) continue
+        const path = trimmed.startsWith('file://')
+          ? trimmed.slice('file://'.length)
+          : trimmed
+        if (!/^[A-Za-z]:?[\\/]/.test(path) || !ext.test(path)) continue
+        try {
+          out.add(decodeURIComponent(path))
+        } catch {
+          out.add(path)
+        }
+      }
+      return [...out]
+    }
+
     const onPaste = (e: ClipboardEvent) => {
       const items = [...(e.clipboardData?.items ?? [])]
       const imageItem = items.find((i) => MIME_EXT[i.type])
+      const imagePaths = imagePathsFromClipboard(e)
       const hasText = !!e.clipboardData?.getData('text/plain')
-      // Copied FILE (from a file manager) rides as a URI list, not a File.
-      const uriList = e.clipboardData?.getData('text/uri-list') ?? ''
-      const imageUri = uriList
-        .split(/\r?\n/)
-        .map((u) => u.trim())
-        .find((u) => /^file:\/\/.+\.(png|jpe?g|gif|webp|svg)$/i.test(u))
 
-      // Plain text paste: never intercept. Nothing promising: let Muya work.
-      if (!imageItem && !imageUri && hasText) return
-      if (!imageItem && !imageUri) {
-        // WebKitGTK hides system-clipboard images from the DOM — ask the OS.
-        const docDir = requireDocDir()
-        if (!docDir) return
-        e.preventDefault()
-        e.stopPropagation()
+      // Plain text paste (no image payload): never intercept — let Muya work.
+      if (!imageItem && imagePaths.length === 0 && hasText) return
+      e.preventDefault()
+      e.stopPropagation()
+      const docDir = requireDocDir()
+      if (!docDir) return
+
+      // Copied image FILES (file manager, desktop) — import each into assets.
+      if (imagePaths.length > 0) {
+        imagePaths.forEach((src) => importFile(docDir, src))
+        return
+      }
+
+      if (!imageItem) {
+        // WebKitGTK hides system-clipboard BITMAPS from the DOM — ask the OS.
         void tauri
           .pasteImage(docDir)
           .then((rel) => {
@@ -128,21 +171,7 @@ export function MuyaEditor({ tab, onInput, onSelection }: Props) {
         return
       }
 
-      e.preventDefault()
-      e.stopPropagation()
-      const docDir = requireDocDir()
-      if (!docDir) return
-      if (imageUri) {
-        // file:// URI → copy the file into the doc's assets.
-        const src = decodeURIComponent(imageUri.replace(/^file:\/\//, ''))
-        void tauri
-          .imageImport(docDir, src)
-          .then(insertImageMarkdown)
-          .catch((err) => useToast.getState().show(`Image paste: ${err}`))
-        return
-      }
-      const item = imageItem as DataTransferItem
-      const file = item.getAsFile()
+      const file = (imageItem as DataTransferItem).getAsFile()
       if (!file) {
         // getAsFile() null (WebKitGTK): OS clipboard fallback.
         void tauri
@@ -154,7 +183,7 @@ export function MuyaEditor({ tab, onInput, onSelection }: Props) {
           .catch((err) => useToast.getState().show(`Image paste: ${err}`))
         return
       }
-      const ext = MIME_EXT[item.type]
+      const ext = MIME_EXT[(imageItem as DataTransferItem).type]
       void file
         .arrayBuffer()
         .then(async (buf) => {
@@ -174,8 +203,10 @@ export function MuyaEditor({ tab, onInput, onSelection }: Props) {
         return
       }
       const docDir = docPath.split(/[\\/]/).slice(0, -1).join('/')
+      // The drop is user consent — allow the source path, then import.
       void tauri
-        .imageImport(docDir, src)
+        .fsAllow(src)
+        .then(() => tauri.imageImport(docDir, src))
         .then((rel) => insertText(`![image](<${rel}>)`))
         .catch((err) => useToast.getState().show(`Image import: ${err}`))
     }

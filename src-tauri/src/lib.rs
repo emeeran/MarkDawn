@@ -17,7 +17,7 @@ pub fn run() {
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.set_focus();
                 for a in argv.iter().skip(1) {
-                    if a.ends_with(".md") {
+                    if lifecycle::is_document_arg(a) {
                         let _ = app.emit("open-path", a.to_string());
                     }
                 }

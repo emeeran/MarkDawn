@@ -8,13 +8,21 @@ use tauri::{AppHandle, Emitter};
 pub static QUIT_ARMED: AtomicBool = AtomicBool::new(false);
 static STARTUP_FILES: OnceLock<Vec<String>> = OnceLock::new();
 
-/// Markdown paths passed to the very first launch (`notepad foo.md`). The
+/// Document extensions we accept from argv ("Open With" passes any of these).
+/// Keep in sync with the bundle fileAssociations in tauri.conf.json.
+pub fn is_document_arg(arg: &str) -> bool {
+    ["md", "markdown", "txt"]
+        .iter()
+        .any(|ext| arg.to_lowercase().ends_with(&format!(".{ext}")))
+}
+
+/// Document paths passed to the very first launch (`markdawn foo.md`). The
 /// single-instance callback covers *subsequent* launches; this covers the
 /// first, which used to silently drop the argument.
 fn collect_startup_files() -> Vec<String> {
     std::env::args()
         .skip(1)
-        .filter(|a| a.ends_with(".md") && std::path::Path::new(a).is_file())
+        .filter(|a| is_document_arg(a) && std::path::Path::new(a).is_file())
         .collect()
 }
 

@@ -33,6 +33,20 @@
     "category": "Productivity",
     "shortDescription": "MarkDawn — Typora-style Markdown editor with AI",
     "longDescription": "MarkDawn is a seamless live Markdown editor with built-in AI writing features.",
+    "fileAssociations": [
+      {
+        "name": "Markdown document",
+        "role": "Editor",
+        "ext": ["md", "markdown"],
+        "mimeType": "text/markdown"
+      },
+      {
+        "name": "Plain text document",
+        "role": "Editor",
+        "ext": ["txt"],
+        "mimeType": "text/plain"
+      }
+    ],
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"]
   }
 }

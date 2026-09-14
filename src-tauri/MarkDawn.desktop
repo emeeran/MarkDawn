@@ -1,0 +1,10 @@
+[Desktop Entry]
+Categories=Office;
+Comment=MarkDawn — Typora-style Markdown editor with AI
+Exec=markdawn %f
+StartupWMClass=markdawn
+Icon=markdawn
+Name=MarkDawn
+Terminal=false
+Type=Application
+MimeType=text/markdown;text/plain
