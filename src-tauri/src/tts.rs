@@ -93,16 +93,20 @@ pub fn tts_stop(state: State<'_, TtsState>) {
 /// Synthesize `text` with edge-tts, then play the audio with the first
 /// available player. Channel-delivered (async responses don't resolve on this
 /// WebKitGTK build). Resolves once playback starts (or on error).
+/// `rate`/`volume` are like "+10%"/"-5%", `pitch` like "+20Hz"/"-10Hz".
 #[tauri::command]
 pub fn tts_speak(
     app: AppHandle,
     text: String,
     voice: Option<String>,
+    rate: Option<String>,
+    pitch: Option<String>,
+    volume: Option<String>,
     on_result: Channel<Cmd<bool>>,
 ) {
     tauri::async_runtime::spawn(async move {
         let state = app.state::<TtsState>();
-        let out = match speak_inner(&text, voice, &state).await {
+        let out = match speak_inner(&text, voice, rate, pitch, volume, &state).await {
             Ok(()) => Cmd { ok: true, value: true, error: None },
             Err(e) => Cmd { ok: false, value: false, error: Some(e) },
         };
@@ -110,7 +114,22 @@ pub fn tts_speak(
     });
 }
 
-async fn speak_inner(text: &str, voice: Option<String>, state: &TtsState) -> Result<(), String> {
+/// Accept only `[+-]<digits><suffix>` — these strings become argv values, and
+/// the joined `--opt=value` form keeps a leading `-` out of flag position.
+fn valid_tts_param(s: &str, suffix: &str) -> bool {
+    let num = s.strip_suffix(suffix).unwrap_or("");
+    let num = num.strip_prefix('+').or_else(|| num.strip_prefix('-')).unwrap_or(num);
+    !num.is_empty() && num.chars().all(|c| c.is_ascii_digit())
+}
+
+async fn speak_inner(
+    text: &str,
+    voice: Option<String>,
+    rate: Option<String>,
+    pitch: Option<String>,
+    volume: Option<String>,
+    state: &TtsState,
+) -> Result<(), String> {
     let text = text.trim().to_string();
     if text.is_empty() {
         return Err("nothing to read".into());
@@ -134,8 +153,25 @@ async fn speak_inner(text: &str, voice: Option<String>, state: &TtsState) -> Res
     let txt2 = txt.clone();
     let mp32 = mp3.clone();
     let voice = voice.unwrap_or_else(|| "en-US-AriaNeural".into());
-    let synth = tokio::process::Command::new("edge-tts")
-        .args(["--file", &txt2.to_string_lossy(), "--voice", &voice, "--write-media", &mp32.to_string_lossy()])
+    let mut cmd = tokio::process::Command::new("edge-tts");
+    cmd.arg("--file").arg(&txt2)
+        .arg("--voice").arg(&voice)
+        .arg("--write-media").arg(&mp32);
+    for (value, suffix, flag) in [
+        (rate, "%", "--rate"),
+        (pitch, "Hz", "--pitch"),
+        (volume, "%", "--volume"),
+    ] {
+        if let Some(v) = value.filter(|v| !v.is_empty()) {
+            if !valid_tts_param(&v, suffix) {
+                let _ = std::fs::remove_file(&txt);
+                return Err(format!("invalid {flag} value: {v}"));
+            }
+            // Joined form: "--rate=-10%" — a bare "-10%" would parse as a flag.
+            cmd.arg(format!("{flag}={v}"));
+        }
+    }
+    let synth = cmd
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         // If the task is dropped mid-flight, take the child down with it.
@@ -227,5 +263,23 @@ fn cleanup_old_temp_files() {
                 let _ = std::fs::remove_file(e.path());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::valid_tts_param;
+
+    #[test]
+    fn tts_param_validation() {
+        assert!(valid_tts_param("+10%", "%"));
+        assert!(valid_tts_param("-5%", "%"));
+        assert!(valid_tts_param("0%", "%"));
+        assert!(valid_tts_param("+20Hz", "Hz"));
+        // Flag-shaped or garbage values are rejected.
+        assert!(!valid_tts_param("--file=/etc/passwd", "%"));
+        assert!(!valid_tts_param("10", "%"));
+        assert!(!valid_tts_param("", "%"));
+        assert!(!valid_tts_param("abc%", "%"));
     }
 }

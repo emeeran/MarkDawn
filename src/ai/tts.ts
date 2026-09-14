@@ -42,9 +42,9 @@ export async function readAloud(mode: ReadMode) {
     useToast.getState().show('edge-tts is not installed — run: pip install edge-tts')
     return
   }
-  const voice = useSettings.getState().ttsVoice || undefined
+  const s = useSettings.getState()
   void tauri
-    .ttsSpeak(text, voice)
+    .ttsSpeak(text, s.ttsVoice || undefined, s.ttsRate, s.ttsPitch, s.ttsVolume)
     .catch((e) => useToast.getState().show(`Read aloud: ${e}`))
 }
 

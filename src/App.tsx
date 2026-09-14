@@ -133,17 +133,23 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // --- theme (auto follows the OS) + font size ---
+  // --- theme (auto follows the OS) + typography vars ---
   useEffect(() => {
     const apply = () => {
       document.documentElement.dataset.theme = resolvedTheme(settings.theme)
-      document.documentElement.style.setProperty('--editor-font-size', `${settings.fontSize}px`)
+      const style = document.documentElement.style
+      style.setProperty('--editor-font-size', `${settings.fontSize}px`)
+      style.setProperty('--editor-line-height', `${settings.lineHeight}`)
+      style.setProperty('--editor-align', settings.textAlign)
+      // Empty family = app default; an empty var would nuke font resolution.
+      if (settings.editorFont) style.setProperty('--editor-font-family', settings.editorFont)
+      else style.removeProperty('--editor-font-family')
     }
     apply()
     if (settings.theme !== 'auto') return
     darkQuery.addEventListener('change', apply)
     return () => darkQuery.removeEventListener('change', apply)
-  }, [settings.theme, settings.fontSize])
+  }, [settings.theme, settings.fontSize, settings.editorFont, settings.lineHeight, settings.textAlign])
 
   /**
    * Para/format/theme are prefix-dispatched (menu-only idioms); everything

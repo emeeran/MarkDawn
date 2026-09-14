@@ -130,7 +130,14 @@ input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
 .editor-host {
   flex: 1; overflow-y: auto; outline: none;
   font-size: var(--editor-font-size);
+  font-family: var(--editor-font-family, inherit);
+  line-height: var(--editor-line-height, 1.6);
+  text-align: var(--editor-align, left);
   background: var(--bg); color: var(--fg);
+}
+/* Blocks where alignment would only look broken. */
+.editor-host pre, .editor-host code, .editor-host table, .editor-host .md-codeblock {
+  text-align: start;
 }
 /* Muya surface theming hooks — seamless page, generous top whitespace */
 .editor-host .mu-editor { padding: 56px 60px 40vh; max-width: 860px; margin: 0 auto; }
@@ -301,6 +308,10 @@ input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
 .settings-col small { color: var(--muted); }
 .key-ok { color: #3fb950; }
 .key-missing { color: var(--muted); }
+.seg-group { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg-group button { border: none; border-radius: 0; padding: 4px 12px; font-size: 13px; }
+.seg-group button + button { border-left: 1px solid var(--border); }
+.seg-group button.on { background: var(--accent); color: #fff; }
 .modal-footer { display: flex; justify-content: flex-end; margin-top: 18px; }
 
 .toast {

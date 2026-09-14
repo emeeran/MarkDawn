@@ -41,9 +41,14 @@ export interface SelectionInfo {
 
 export type ThemeId = 'auto' | 'github' | 'night' | 'newsprint' | 'pixyll'
 
+export type TextAlignment = 'left' | 'center' | 'right' | 'justify'
+
 export interface Settings {
   theme: ThemeId
   fontSize: number
+  editorFont: string
+  lineHeight: number
+  textAlign: TextAlignment
   focusMode: boolean
   typewriterMode: boolean
   ghostText: boolean
@@ -54,6 +59,9 @@ export interface Settings {
   sidebarWidth: number
   showWordCount: boolean
   ttsVoice: string
+  ttsRate: string
+  ttsPitch: string
+  ttsVolume: string
   provider: ProviderId
   models: Record<ProviderId, string>
   ollamaUrl: string
@@ -67,6 +75,9 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   theme: 'auto',
   fontSize: 16,
+  editorFont: '',
+  lineHeight: 1.6,
+  textAlign: 'left',
   focusMode: false,
   typewriterMode: false,
   ghostText: false,
@@ -77,6 +88,9 @@ export const DEFAULT_SETTINGS: Settings = {
   sidebarWidth: 240,
   showWordCount: true,
   ttsVoice: 'en-US-AriaNeural',
+  ttsRate: '+0%',
+  ttsPitch: '+0Hz',
+  ttsVolume: '+0%',
   provider: 'anthropic',
   models: {
     anthropic: 'claude-sonnet-5',

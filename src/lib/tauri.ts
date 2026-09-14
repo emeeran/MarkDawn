@@ -84,8 +84,8 @@ export const tauri = {
 
   ttsAvailable: () => invoke<boolean>('tts_available'),
   ttsVoices: () => cmdWithChannel<string[]>('tts_voices'),
-  ttsSpeak: (text: string, voice?: string) =>
-    cmdWithChannel<boolean>('tts_speak', { text, voice }),
+  ttsSpeak: (text: string, voice?: string, rate?: string, pitch?: string, volume?: string) =>
+    cmdWithChannel<boolean>('tts_speak', { text, voice, rate, pitch, volume }),
   ttsStop: () => invoke<void>('tts_stop'),
 
   storeGet: (name: string) => invoke<Record<string, unknown>>('store_get', { name }),
