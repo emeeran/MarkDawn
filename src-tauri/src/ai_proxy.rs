@@ -90,32 +90,76 @@ pub fn ai_cancel(id: String, aborts: State<'_, AbortMap>) {
     }
 }
 
+/// Model listing via Channel — async-command responses don't resolve on this
+/// WebKitGTK build, so sync command + spawned task + Channel.
 #[tauri::command]
-pub async fn ollama_models(ollama_url: Option<String>) -> Result<Vec<String>, String> {
-    let base = ollama_url.unwrap_or_else(default_ollama_url);
-    let url = format!("{base}/api/tags");
-    let resp = client()?
-        .get(&url)
-        .timeout(Duration::from_secs(3))
-        .send()
-        .await
-        .map_err(|_| format!("cannot reach Ollama at {base}"))?;
-    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    Ok(json["models"]
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|m| m["name"].as_str().map(String::from))
-                .collect()
+pub fn ollama_models(ollama_url: Option<String>, on_result: Channel<crate::pick::Cmd<Vec<String>>>) {
+    tauri::async_runtime::spawn(async move {
+        let base = ollama_url.unwrap_or_else(default_ollama_url);
+        let url = format!("{base}/api/tags");
+        let out = (async {
+            let resp = client()?
+                .get(&url)
+                .timeout(Duration::from_secs(3))
+                .send()
+                .await
+                .map_err(|_| format!("cannot reach Ollama at {base}"))?;
+            let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+            Ok::<Vec<String>, String>(json["models"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|m| m["name"].as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default())
         })
-        .unwrap_or_default())
+        .await;
+        let out = match out {
+            Ok(v) => crate::pick::Cmd { ok: true, value: v, error: None },
+            Err(e) => crate::pick::Cmd { ok: false, value: Vec::new(), error: Some(e) },
+        };
+        let _ = on_result.send(out);
+    });
 }
 
 /// List available models for a provider, powering the Settings model selector.
 #[tauri::command]
-pub async fn fetch_models(provider: String, ollama_url: Option<String>) -> Result<Vec<String>, String> {
+pub fn fetch_models(
+    provider: String,
+    ollama_url: Option<String>,
+    on_result: Channel<crate::pick::Cmd<Vec<String>>>,
+) {
+    tauri::async_runtime::spawn(async move {
+        let out = match list_models(provider, ollama_url).await {
+            Ok(v) => crate::pick::Cmd { ok: true, value: v, error: None },
+            Err(e) => crate::pick::Cmd { ok: false, value: Vec::new(), error: Some(e) },
+        };
+        let _ = on_result.send(out);
+    });
+}
+
+async fn list_models(provider: String, ollama_url: Option<String>) -> Result<Vec<String>, String> {
     match provider.as_str() {
-        "ollama" => ollama_models(ollama_url).await,
+        "ollama" => {
+            let base = ollama_url.unwrap_or_else(default_ollama_url);
+            let url = format!("{base}/api/tags");
+            let resp = client()?
+                .get(&url)
+                .timeout(Duration::from_secs(3))
+                .send()
+                .await
+                .map_err(|_| format!("cannot reach Ollama at {base}"))?;
+            let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+            Ok(json["models"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|m| m["name"].as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default())
+        }
         // OpenAI-compatible {data: [{id}]} shape.
         "openai" => list_bearer_models("https://api.openai.com/v1/models", "openai").await,
         "groq" => list_bearer_models("https://api.groq.com/openai/v1/models", "groq").await,

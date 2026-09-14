@@ -1,8 +1,7 @@
-import { open, save } from '@tauri-apps/plugin-dialog'
 import { renderToStaticHTML } from '@muyajs/core'
 import { runSelectionTransform } from '../ai/transform'
 import { getMarkdown, getTOC } from '../editor/editBridge'
-import { tauri } from '../lib/tauri'
+import { pickFile, pickFolder, pickSaveFile, tauri } from '../lib/tauri'
 import { useChat } from '../stores/chat'
 import { useSettings } from '../stores/settings'
 import { useTabs } from '../stores/tabs'
@@ -20,8 +19,8 @@ export interface Command {
 
 async function openFile() {
   try {
-    const path = await open({ multiple: false, filters: [{ name: 'Markdown', extensions: ['md', 'markdown', 'txt'] }] })
-    if (typeof path === 'string') void useTabs.getState().open(path)
+    const path = await pickFile([{ name: 'Markdown', extensions: ['md', 'markdown', 'txt'] }])
+    if (path) void useTabs.getState().open(path)
   } catch (e) {
     useToast.getState().show(`Open file: ${e}`)
   }
@@ -29,8 +28,9 @@ async function openFile() {
 
 async function openFolder() {
   try {
-    const dir = await open({ directory: true })
-    if (typeof dir === 'string') void useWorkspace.getState().openRoot(dir)
+    const dir = await pickFolder()
+    useToast.getState().show(`[dbg] picked: ${dir}`) // DEBUG
+    if (dir) void useWorkspace.getState().openRoot(dir)
   } catch (e) {
     useToast.getState().show(`Open folder: ${e}`)
   }
@@ -52,10 +52,9 @@ body{max-width:800px;margin:0 auto;padding:48px 24px;line-height:1.6}
 .toc{border:1px solid #ddd;border-radius:6px;padding:12px 16px;margin:24px 0}
 .toc-3,.toc-4,.toc-5,.toc-6{padding-left:16px}
 </style></head><body><article>${tocHtml}${body}</article></body></html>`
-  const path = await save({
-    defaultPath: `${title.replace(/\.md$/, '')}.html`,
-    filters: [{ name: 'HTML', extensions: ['html'] }],
-  }).catch((e) => {
+  const path = await pickSaveFile(`${title.replace(/\.md$/, '')}.html`, [
+    { name: 'HTML', extensions: ['html'] },
+  ]).catch((e) => {
     useToast.getState().show(`Export: ${e}`)
     return null
   })

@@ -1,7 +1,9 @@
+use crate::pick::Cmd;
+use tauri::ipc::Channel;
 use tauri::command;
 
-const FORMATS: [&str; 7] = ["docx", "rtf", "odt", "latex", "rst", "epub", "org"];
-
+/// SYNC command — async-command responses don't resolve on this WebKitGTK
+/// build; blocking briefly on `pandoc --version` is acceptable.
 #[command]
 pub fn pandoc_available() -> bool {
     std::process::Command::new("pandoc")
@@ -11,9 +13,21 @@ pub fn pandoc_available() -> bool {
         .unwrap_or(false)
 }
 
-/// Convert a saved Markdown file with pandoc. Returns the destination path.
+/// Convert a saved Markdown file with pandoc. Channel-delivered (async
+/// responses don't resolve on this build). Value = destination path.
 #[command]
-pub async fn export_pandoc(src: String, format: String) -> Result<String, String> {
+pub fn export_pandoc(src: String, format: String, on_result: Channel<Cmd<String>>) {
+    tauri::async_runtime::spawn(async move {
+        let out = match run_pandoc(src, format).await {
+            Ok(dest) => Cmd { ok: true, value: dest, error: None },
+            Err(e) => Cmd { ok: false, value: String::new(), error: Some(e) },
+        };
+        let _ = on_result.send(out);
+    });
+}
+
+async fn run_pandoc(src: String, format: String) -> Result<String, String> {
+    const FORMATS: [&str; 7] = ["docx", "rtf", "odt", "latex", "rst", "epub", "org"];
     if !FORMATS.contains(&format.as_str()) {
         return Err(format!("unsupported format: {format}"));
     }
@@ -21,11 +35,10 @@ pub async fn export_pandoc(src: String, format: String) -> Result<String, String
         Some((stem, _)) => format!("{stem}.{format}"),
         None => format!("{src}.{format}"),
     };
-    let src2 = src.clone();
     let dest2 = dest.clone();
     let out = tokio::task::spawn_blocking(move || {
         std::process::Command::new("pandoc")
-            .args(["-f", "markdown", "-t", &format, "-o", &dest2, &src2])
+            .args(["-f", "markdown", "-t", &format, "-o", &dest2, &src])
             .output()
     })
     .await

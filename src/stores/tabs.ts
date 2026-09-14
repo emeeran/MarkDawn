@@ -1,6 +1,5 @@
 import { create } from 'zustand'
-import { save } from '@tauri-apps/plugin-dialog'
-import { tauri } from '../lib/tauri'
+import { pickSaveFile, tauri } from '../lib/tauri'
 import type { Tab } from '../types'
 import { useToast } from './toast'
 
@@ -114,10 +113,9 @@ export const useTabs = create<TabsStore>((setState, get) => ({
     const id = get().activeId
     const tab = get().tabs.find((t) => t.id === id)
     if (!tab) return
-    const path = await save({
-      defaultPath: `${tab.title}.md`,
-      filters: [{ name: 'Markdown', extensions: ['md'] }],
-    }).catch((e) => {
+    const path = await pickSaveFile(`${tab.title}.md`, [
+      { name: 'Markdown', extensions: ['md'] },
+    ]).catch((e) => {
       useToast.getState().show(`Save as: ${e}`)
       return null
     })

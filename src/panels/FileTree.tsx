@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { tauri } from '../lib/tauri'
+import { pickFolder, tauri } from '../lib/tauri'
 import { useTabs } from '../stores/tabs'
 import { useToast } from '../stores/toast'
 import { useWorkspace } from '../stores/workspace'
@@ -13,7 +13,7 @@ export function FileTree() {
   if (!root) {
     return (
       <div className="panel-empty">
-        <button onClick={() => void pickFolder()}>Open folder…</button>
+        <button onClick={() => void openFolderPicker()}>Open folder…</button>
       </div>
     )
   }
@@ -138,11 +138,10 @@ function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
   )
 }
 
-async function pickFolder() {
+async function openFolderPicker() {
   try {
-    const { open } = await import('@tauri-apps/plugin-dialog')
-    const dir = await open({ directory: true })
-    if (typeof dir === 'string') void useWorkspace.getState().openRoot(dir)
+    const dir = await pickFolder()
+    if (dir) void useWorkspace.getState().openRoot(dir)
   } catch (e) {
     useToast.getState().show(`Open folder: ${e}`)
   }

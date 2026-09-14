@@ -2,6 +2,7 @@ mod ai_proxy;
 mod export;
 mod fs;
 mod menu;
+mod pick;
 mod secrets;
 mod tts;
 
@@ -59,6 +60,10 @@ pub fn run() {
             ai_proxy::fetch_models,
             export::pandoc_available,
             export::export_pandoc,
+            pick::pick_folder,
+            pick::pick_file,
+            pick::pick_save,
+            pick::debug_chan,
             tts::tts_available,
             tts::tts_voices,
             tts::tts_speak,

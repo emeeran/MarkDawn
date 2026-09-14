@@ -1,6 +1,8 @@
+use crate::pick::Cmd;
 use std::sync::Mutex;
 use std::time::Duration;
-use tauri::State;
+use tauri::ipc::Channel;
+use tauri::{AppHandle, Manager, State};
 use tokio::process::Child;
 
 /// Read-aloud via the `edge-tts` CLI (Microsoft neural voices).
@@ -29,24 +31,34 @@ pub fn tts_available() -> bool {
 }
 
 #[tauri::command]
-pub async fn tts_voices() -> Result<Vec<String>, String> {
-    let out = tokio::process::Command::new("edge-tts")
-        .arg("--list-voices")
-        .output()
-        .await
-        .map_err(|e| format!("edge-tts not found: {e}"))?;
-    if !out.status.success() {
-        return Err("edge-tts --list-voices failed".into());
-    }
-    let text = String::from_utf8_lossy(&out.stdout);
-    // Lines look like: "en-US-AriaNeural    Female    ..." — first token is the name.
-    Ok(text
-        .lines()
-        .skip(1) // header row
-        .filter_map(|l| l.split_whitespace().next())
-        .filter(|s| s.contains('-'))
-        .map(String::from)
-        .collect())
+pub fn tts_voices(on_result: Channel<Cmd<Vec<String>>>) {
+    tauri::async_runtime::spawn(async move {
+        let out = (async {
+            let proc_out = tokio::process::Command::new("edge-tts")
+                .arg("--list-voices")
+                .output()
+                .await
+                .map_err(|e| format!("edge-tts not found: {e}"))?;
+            if !proc_out.status.success() {
+                return Err("edge-tts --list-voices failed".into());
+            }
+            let text = String::from_utf8_lossy(&proc_out.stdout);
+            // Lines look like: "en-US-AriaNeural    Female    ..." — first token is the name.
+            Ok::<Vec<String>, String>(text
+                .lines()
+                .skip(1) // header row
+                .filter_map(|l| l.split_whitespace().next())
+                .filter(|s| s.contains('-'))
+                .map(String::from)
+                .collect())
+        })
+        .await;
+        let out = match out {
+            Ok(v) => Cmd { ok: true, value: v, error: None },
+            Err(e) => Cmd { ok: false, value: Vec::new(), error: Some(e) },
+        };
+        let _ = on_result.send(out);
+    });
 }
 
 fn kill_locked(slot: &mut Option<Child>) {
@@ -71,13 +83,33 @@ pub fn tts_stop(state: State<'_, TtsState>) {
 }
 
 /// Synthesize `text` with edge-tts, then play the audio with the first
-/// available player. Returns immediately after starting playback.
+/// available player. Channel-delivered (async responses don't resolve on this
+/// WebKitGTK build). Resolves once playback starts (or on error).
 #[tauri::command]
-pub async fn tts_speak(
+pub fn tts_speak(
+    app: AppHandle,
     text: String,
     voice: Option<String>,
-    state: State<'_, TtsState>,
-) -> Result<(), String> {
+    on_result: Channel<Cmd<bool>>,
+) {
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<TtsState>();
+        let out = match speak_inner(&text, voice, &state).await {
+            Ok(()) => Cmd { ok: true, value: true, error: None },
+            Err(e) => Cmd { ok: false, value: false, error: Some(e) },
+        };
+        let _ = on_result.send(out);
+    });
+}
+
+async fn speak_inner(text: &str, voice: Option<String>, state: &TtsState) -> Result<(), String> {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err("nothing to read".into());
+    }
+    // ponytail: hard cap — edge-tts degrades on very long single requests.
+    let text = text.chars().take(30_000).collect::<String>();
+    stop_internal(state);
     let text = text.trim().to_string();
     if text.is_empty() {
         return Err("nothing to read".into());
