@@ -206,10 +206,21 @@ async fn list_bearer_models(url: &str, provider: &str) -> Result<Vec<String>, St
         .as_array()
         .map(|a| {
             a.iter()
-                .filter_map(|m| m["id"].as_str().map(String::from))
+                .filter_map(|m| m["id"].as_str())
+                .filter(|id| is_chat_model(id))
+                .map(String::from)
                 .collect()
         })
         .unwrap_or_default())
+}
+
+/// Exclude known non-chat model families (classifiers, transcription,
+/// TTS, embeddings) — they break a streaming chat request.
+fn is_chat_model(id: &str) -> bool {
+    let l = id.to_lowercase();
+    !["guard", "whisper", "tts", "embed", "rerank", "safety", "dall-e"]
+        .iter()
+        .any(|k| l.contains(k))
 }
 
 async fn stream(req: &AiRequest, ch: &Channel<AiEvent>) -> Result<(), String> {
@@ -251,9 +262,24 @@ async fn post_stream(builder: reqwest::RequestBuilder) -> Result<reqwest::Respon
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!("HTTP {status}: {}", truncate(&body, 500)));
+        let mut msg = extract_api_error(&body);
+        if msg.contains("do not support streaming") {
+            msg.push_str(" — this model can't stream. Pick a chat model in Preferences → AI (e.g. llama-3.3-70b-versatile for Groq).");
+        }
+        return Err(format!("HTTP {status}: {msg}"));
     }
     Ok(resp)
+}
+
+/// Pull the human-readable message out of an API error body
+/// ({"error":{"message":"…"}} shape used by Anthropic/OpenAI/Groq).
+fn extract_api_error(body: &str) -> String {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(body) {
+        if let Some(m) = v["error"]["message"].as_str() {
+            return truncate(m, 300).to_string();
+        }
+    }
+    truncate(body, 300).to_string()
 }
 
 async fn stream_anthropic(req: &AiRequest, ch: &Channel<AiEvent>) -> Result<(), String> {
@@ -393,5 +419,30 @@ fn truncate(s: &str, n: usize) -> &str {
     match s.char_indices().nth(n) {
         Some((i, _)) => &s[..i],
         None => s,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_api_error_pulls_message_field() {
+        let body = r#"{"error":{"message":"text classification models do not support streaming","type":"invalid_request_error"}}"#;
+        assert_eq!(extract_api_error(body), "text classification models do not support streaming");
+    }
+
+    #[test]
+    fn extract_api_error_falls_back_to_raw_body() {
+        assert_eq!(extract_api_error("not json"), "not json");
+    }
+
+    #[test]
+    fn is_chat_model_excludes_non_chat_families() {
+        assert!(is_chat_model("llama-3.3-70b-versatile"));
+        assert!(is_chat_model("gpt-5.2"));
+        assert!(!is_chat_model("meta-llama/llama-prompt-guard-2-22m"));
+        assert!(!is_chat_model("whisper-large-v3"));
+        assert!(!is_chat_model("playai-tts"));
     }
 }

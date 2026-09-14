@@ -16,7 +16,14 @@ export const useSettings = create<SettingsStore>((setState, get) => ({
   async load() {
     try {
       const stored = await tauri.settingsGet()
-      setState({ ...DEFAULT_SETTINGS, ...(stored as Partial<Settings>), loaded: true })
+      const merged = { ...DEFAULT_SETTINGS, ...(stored as Partial<Settings>) }
+      // Migrate non-chat models that can't stream (e.g. Groq prompt-guard).
+      for (const p of Object.keys(merged.models) as (keyof Settings['models'])[]) {
+        if (/guard|whisper|tts|embed|rerank/i.test(merged.models[p])) {
+          merged.models[p] = DEFAULT_SETTINGS.models[p]
+        }
+      }
+      setState({ ...merged, loaded: true })
     } catch {
       setState({ loaded: true })
     }
