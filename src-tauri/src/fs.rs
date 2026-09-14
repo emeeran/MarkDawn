@@ -301,6 +301,64 @@ pub fn save_recovery(app: AppHandle, title: String, contents: String) -> Result<
     Ok(path.to_string_lossy().to_string())
 }
 
+// --- clipboard image paste ---------------------------------------------------
+//
+// WebKitGTK's DataTransferItem.getAsFile() returns null for images copied from
+// system apps (file managers, viewers), so the webview alone can't paste
+// them. Read the clipboard from the OS instead: xclip on X11, wl-paste on
+// Wayland. ponytail: CLI clipboard readers, not a gtk bindings dependency;
+// on macOS/Windows the JS clipboard path works and this is only a fallback.
+
+/// Grab the clipboard image (if any), save it next to the document, and
+/// return the portable relative path. None = no image on the clipboard.
+#[tauri::command]
+pub fn paste_image(app: AppHandle, doc_dir: String) -> Result<Option<String>, String> {
+    let dir = PathBuf::from(&doc_dir);
+    app.state::<FsGuard>().check(&dir)?;
+    let Some((bytes, ext)) = read_clipboard_image() else {
+        return Ok(None);
+    };
+    import_image_inner(&dir, ext, |dest| fs::write(dest, bytes.as_slice()).map_err(|e| e.to_string()))
+        .map(Some)
+}
+
+/// Read the clipboard image via the OS tooling. Runs off-thread with a hard
+/// timeout: xclip occasionally wedges waiting on the X selection, and this is
+/// a sync command on the main thread — a hang here would freeze the app.
+/// ponytail: on timeout the reader thread leaks until its child exits; rare
+/// and harmless, vs. adding async+Channel plumbing for a fallback path.
+fn read_clipboard_image() -> Option<(Vec<u8>, String)> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        tx.send(read_clipboard_image_inner()).ok();
+    });
+    rx.recv_timeout(Duration::from_secs(3)).unwrap_or(None)
+}
+
+fn read_clipboard_image_inner() -> Option<(Vec<u8>, String)> {
+    // (program, args, extension) — first attempt that yields non-empty output wins.
+    let attempts: [(&str, Vec<&str>, &str); 4] = [
+        ("wl-paste", vec!["--no-newline", "--type", "image/png"], "png"),
+        ("wl-paste", vec!["--no-newline", "--type", "image/jpeg"], "jpg"),
+        ("xclip", vec!["-selection", "clipboard", "-o", "-t", "image/png"], "png"),
+        ("xclip", vec!["-selection", "clipboard", "-o", "-t", "image/jpeg"], "jpg"),
+    ];
+    for (prog, args, ext) in attempts {
+        let Ok(out) = std::process::Command::new(prog)
+            .args(&args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .output()
+        else {
+            continue; // tool not installed
+        };
+        if out.status.success() && !out.stdout.is_empty() {
+            return Some((out.stdout, ext.to_string()));
+        }
+    }
+    None
+}
+
 /// Watch a workspace root and emit debounced `fs-changed` events.
 /// One watcher at a time; starting a new watch replaces the old.
 #[tauri::command]

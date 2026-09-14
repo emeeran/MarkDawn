@@ -48,6 +48,7 @@ pub fn run() {
             fs::trash_path,
             fs::image_import,
             fs::image_save_bytes,
+            fs::paste_image,
             fs::save_recovery,
             fs::watch_start,
             fs::watch_stop,

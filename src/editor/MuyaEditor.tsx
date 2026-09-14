@@ -90,25 +90,76 @@ export function MuyaEditor({ tab, onInput, onSelection }: Props) {
       'image/webp': 'webp',
       'image/svg+xml': 'svg',
     }
-    const onPaste = (e: ClipboardEvent) => {
-      const item = [...(e.clipboardData?.items ?? [])].find((i) => MIME_EXT[i.type])
-      if (!item) return
+    function requireDocDir(): string | null {
       const docPath = useTabs.getState().tabs.find((t) => t.id === tab.id)?.path
       if (!docPath) {
         useToast.getState().show('Save the document first (⌘S) to attach images')
+        return null
+      }
+      return docPath.split(/[\\/]/).slice(0, -1).join('/')
+    }
+    const insertImageMarkdown = (rel: string) => insertText(`![image](<${rel}>)`)
+    const onPaste = (e: ClipboardEvent) => {
+      const items = [...(e.clipboardData?.items ?? [])]
+      const imageItem = items.find((i) => MIME_EXT[i.type])
+      const hasText = !!e.clipboardData?.getData('text/plain')
+      // Copied FILE (from a file manager) rides as a URI list, not a File.
+      const uriList = e.clipboardData?.getData('text/uri-list') ?? ''
+      const imageUri = uriList
+        .split(/\r?\n/)
+        .map((u) => u.trim())
+        .find((u) => /^file:\/\/.+\.(png|jpe?g|gif|webp|svg)$/i.test(u))
+
+      // Plain text paste: never intercept. Nothing promising: let Muya work.
+      if (!imageItem && !imageUri && hasText) return
+      if (!imageItem && !imageUri) {
+        // WebKitGTK hides system-clipboard images from the DOM — ask the OS.
+        const docDir = requireDocDir()
+        if (!docDir) return
+        e.preventDefault()
+        e.stopPropagation()
+        void tauri
+          .pasteImage(docDir)
+          .then((rel) => {
+            if (rel) insertImageMarkdown(rel)
+            else useToast.getState().show('No image on the clipboard')
+          })
+          .catch((err) => useToast.getState().show(`Image paste: ${err}`))
         return
       }
+
       e.preventDefault()
       e.stopPropagation()
-      const ext = MIME_EXT[item.type]
+      const docDir = requireDocDir()
+      if (!docDir) return
+      if (imageUri) {
+        // file:// URI → copy the file into the doc's assets.
+        const src = decodeURIComponent(imageUri.replace(/^file:\/\//, ''))
+        void tauri
+          .imageImport(docDir, src)
+          .then(insertImageMarkdown)
+          .catch((err) => useToast.getState().show(`Image paste: ${err}`))
+        return
+      }
+      const item = imageItem as DataTransferItem
       const file = item.getAsFile()
-      if (!file) return
+      if (!file) {
+        // getAsFile() null (WebKitGTK): OS clipboard fallback.
+        void tauri
+          .pasteImage(docDir)
+          .then((rel) => {
+            if (rel) insertImageMarkdown(rel)
+            else useToast.getState().show('Could not read the clipboard image')
+          })
+          .catch((err) => useToast.getState().show(`Image paste: ${err}`))
+        return
+      }
+      const ext = MIME_EXT[item.type]
       void file
         .arrayBuffer()
         .then(async (buf) => {
-          const docDir = docPath.split(/[\\/]/).slice(0, -1).join('/')
           const rel = await tauri.imageSaveBytes(docDir, ext, new Uint8Array(buf))
-          insertText(`![image](<${rel}>)`)
+          insertImageMarkdown(rel)
         })
         .catch((err) => useToast.getState().show(`Image paste: ${err}`))
     }

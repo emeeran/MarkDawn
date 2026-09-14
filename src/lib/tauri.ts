@@ -111,6 +111,12 @@ export const tauri = {
   /** Write a pasted clipboard image next to the document; returns the relative path. */
   imageSaveBytes: (docDir: string, ext: string, bytes: Uint8Array) =>
     invoke<string>('image_save_bytes', { docDir, ext, bytes: Array.from(bytes) }),
+  /**
+   * Read the clipboard image from the OS (xclip/wl-paste) and save it next to
+   * the document. WebKitGTK's getAsFile() drops system-clipboard images, so
+   * this is the reliable paste path on Linux. Null = no image on clipboard.
+   */
+  pasteImage: (docDir: string) => invoke<string | null>('paste_image', { docDir }),
 
   /**
    * Stream an AI completion. Returns a cancel function; keys never reach the
