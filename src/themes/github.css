@@ -1,0 +1,37 @@
+/* GitHub — clean light theme (default). Vars consumed by styles.css; Muya overrides below. */
+html[data-theme='github'] {
+  --bg: #ffffff;
+  --fg: #1f2328;
+  --border: #d0d7de;
+  --muted: #6e7781;
+  --accent: #4a6da7;
+  --panel-bg: #f6f8fa;
+}
+
+html[data-theme='github'] .editor-host .muya-editor {
+  font-family: -apple-system, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+  line-height: 1.6;
+}
+html[data-theme='github'] .editor-host h1,
+html[data-theme='github'] .editor-host h2 { border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+html[data-theme='github'] .editor-host code,
+html[data-theme='github'] .editor-host tt {
+  font-family: var(--mono);
+  background: rgb(175 184 193 / 20%);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 88%;
+}
+html[data-theme='github'] .editor-host pre {
+  background: #f6f8fa;
+  border-radius: 6px;
+}
+html[data-theme='github'] .editor-host blockquote {
+  border-left: 4px solid var(--border);
+  color: var(--muted);
+  padding-left: 14px;
+}
+html[data-theme='github'] .editor-host table { border-collapse: collapse; }
+html[data-theme='github'] .editor-host th,
+html[data-theme='github'] .editor-host td { border: 1px solid var(--border); padding: 5px 12px; }
+html[data-theme='github'] .editor-host tr:nth-child(2n) { background: #f6f8fa; }

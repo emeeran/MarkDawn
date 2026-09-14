@@ -1,0 +1,42 @@
+/* Night — dark theme. */
+html[data-theme='night'] {
+  --bg: #1e2127;
+  --fg: #d7dae0;
+  --border: #363b44;
+  --muted: #8a919c;
+  --accent: #7aa2f7;
+  --panel-bg: #16181d;
+  --mono: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+
+html[data-theme='night'] body { color-scheme: dark; }
+
+html[data-theme='night'] .editor-host .muya-editor {
+  font-family: var(--font);
+  line-height: 1.6;
+}
+html[data-theme='night'] .editor-host h1,
+html[data-theme='night'] .editor-host h2 { border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+html[data-theme='night'] .editor-host h1, html[data-theme='night'] .editor-host h2,
+html[data-theme='night'] .editor-host h3 { color: #e8eaef; }
+html[data-theme='night'] .editor-host code {
+  font-family: var(--mono);
+  background: #2a2e37;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 88%;
+}
+html[data-theme='night'] .editor-host pre {
+  background: #16181d;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+html[data-theme='night'] .editor-host blockquote {
+  border-left: 4px solid var(--border);
+  color: var(--muted);
+  padding-left: 14px;
+}
+html[data-theme='night'] .editor-host th,
+html[data-theme='night'] .editor-host td { border: 1px solid var(--border); padding: 5px 12px; }
+html[data-theme='night'] .editor-host a { color: var(--accent); }
+html[data-theme='night'] .editor-host img { filter: brightness(0.9); }

@@ -1,0 +1,42 @@
+/* Newsprint — warm serif theme, Typora classic. */
+html[data-theme='newsprint'] {
+  --bg: #f3efe6;
+  --fg: #2b2620;
+  --border: #cfc4ae;
+  --muted: #7a705d;
+  --accent: #8b2f1f;
+  --panel-bg: #ece5d3;
+  --font: 'Georgia', 'Noto Serif', 'Times New Roman', serif;
+}
+
+html[data-theme='newsprint'] .editor-host .muya-editor {
+  font-family: var(--font);
+  line-height: 1.7;
+  color: #2b2620;
+}
+html[data-theme='newsprint'] .editor-host h1,
+html[data-theme='newsprint'] .editor-host h2,
+html[data-theme='newsprint'] .editor-host h3 {
+  font-family: var(--font);
+  font-weight: 700;
+  color: #1f1b16;
+}
+html[data-theme='newsprint'] .editor-host code {
+  font-family: var(--mono);
+  background: rgb(0 0 0 / 6%);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+html[data-theme='newsprint'] .editor-host pre {
+  background: #efe9db;
+  border: 1px solid var(--border);
+}
+html[data-theme='newsprint'] .editor-host blockquote {
+  border-left: 3px solid var(--accent);
+  color: var(--muted);
+  padding-left: 14px;
+  font-style: italic;
+}
+html[data-theme='newsprint'] .editor-host a { color: var(--accent); text-decoration: underline; }
+html[data-theme='newsprint'] .editor-host th,
+html[data-theme='newsprint'] .editor-host td { border: 1px solid var(--border); padding: 5px 12px; }

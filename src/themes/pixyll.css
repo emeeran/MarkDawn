@@ -1,0 +1,39 @@
+/* Pixyll — minimal, generous whitespace, Typora classic. */
+html[data-theme='pixyll'] {
+  --bg: #ffffff;
+  --fg: #333333;
+  --border: #e0e0e0;
+  --muted: #999999;
+  --accent: #0079c1;
+  --panel-bg: #f5f5f5;
+  --font: 'Merriweather', Georgia, 'Noto Serif', serif;
+}
+
+html[data-theme='pixyll'] .editor-host .muya-editor {
+  font-family: var(--font);
+  line-height: 1.85;
+  max-width: 720px;
+  font-size: 1.06em;
+}
+html[data-theme='pixyll'] .editor-host h1,
+html[data-theme='pixyll'] .editor-host h2,
+html[data-theme='pixyll'] .editor-host h3 {
+  font-family: var(--font);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+html[data-theme='pixyll'] .editor-host p { margin: 1.2em 0; }
+html[data-theme='pixyll'] .editor-host code {
+  font-family: var(--mono);
+  background: #f0f0f0;
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+html[data-theme='pixyll'] .editor-host pre { background: #f7f7f7; border-radius: 4px; }
+html[data-theme='pixyll'] .editor-host blockquote {
+  border-left: 3px solid var(--accent);
+  color: var(--muted);
+  padding-left: 16px;
+  font-style: italic;
+}
+html[data-theme='pixyll'] .editor-host a { color: var(--accent); }
