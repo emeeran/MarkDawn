@@ -1,6 +1,6 @@
 import { Muya } from '@muyajs/core'
 import { useEffect, useRef } from 'react'
-import { convertFileSrc, tauri } from '../lib/tauri'
+import { tauri } from '../lib/tauri'
 import { useSettings } from '../stores/settings'
 import { useTabs } from '../stores/tabs'
 import { useToast } from '../stores/toast'
@@ -8,6 +8,7 @@ import type { ITocItem } from '@muyajs/core'
 import type { SelectionInfo, Tab } from '../types'
 import { readDomSelection, setSelection } from '../ai/selection'
 import { insertText, registerMuya } from './editBridge'
+import { addImageDataUrls, stripImageDataUrls } from './imageMap'
 import { registerMuyaPlugins, setActiveDocPath } from './muyaSetup'
 import { attachGhostText, detachGhostText, requestGhost, scheduleGhost } from './ghostText'
 
@@ -39,31 +40,11 @@ export function MuyaEditor({ tab, onInput, onSelection }: Props) {
     // otherwise the second init renders into a detached node (blank editor).
     const mount = document.createElement('div')
     host.appendChild(mount)
-    const muya = new Muya(mount, {
-      markdown: tab.markdown,
-      footnote: true,
-      math: true,
-      superSubScript: true,
-      spellcheckEnabled: false,
-      frontMatter: true,
-    })
-    muya.init()
-    muyaRef.current = muya
-    registerMuya(muya)
-    lastEmitted.current = tab.markdown
-    setActiveDocPath(tab.path)
 
-    const emitChange = () => {
-      const md = muya.getMarkdown()
-      lastEmitted.current = md
-      onInput(md, muya.getTOC())
-    }
-    const debouncedEmit = () => {
-      clearTimeout(emitTimer)
-      emitTimer = setTimeout(emitChange, 80)
-    }
+    let muya: Muya | null = null
+    let alive = true
 
-    const onSelChange = () => {
+    function onSelChange() {
       const sel = readDomSelection()
       setSelection(sel)
       onSelection(sel)
@@ -78,8 +59,18 @@ export function MuyaEditor({ tab, onInput, onSelection }: Props) {
       scheduleGhost()
     }
 
-    muya.on('json-change', debouncedEmit)
-    muya.on('selection-change', onSelChange)
+    function emitChange() {
+      if (!muya) return
+      // Data URLs are display-only — the store/save path keeps user paths.
+      const md = stripImageDataUrls(muya.getMarkdown())
+      lastEmitted.current = md
+      onInput(md, muya.getTOC())
+    }
+
+    const debouncedEmit = () => {
+      clearTimeout(emitTimer)
+      emitTimer = setTimeout(emitChange, 80)
+    }
 
     // Image paste: clipboard images are saved to `<doc>_assets/` and inserted
     // as portable relative Markdown. Needs a saved document (a home on disk).
@@ -98,7 +89,7 @@ export function MuyaEditor({ tab, onInput, onSelection }: Props) {
       }
       return docPath.split(/[\\/]/).slice(0, -1).join('/')
     }
-    const insertImageMarkdown = (rel: string) => insertText(`![image](<${rel}>)`)
+    const insertImageMarkdown = (rel: string) => insertText(`![image](${encodeURI(rel)})`) // muya can't parse <...> destinations
 
     /** Import a user-consented source file into the doc assets, then insert. */
     function importFile(docDir: string, src: string) {
@@ -140,7 +131,7 @@ export function MuyaEditor({ tab, onInput, onSelection }: Props) {
       return [...out]
     }
 
-    const onPaste = (e: ClipboardEvent) => {
+    function onPaste(e: ClipboardEvent) {
       const items = [...(e.clipboardData?.items ?? [])]
       const imageItem = items.find((i) => MIME_EXT[i.type])
       const imagePaths = imagePathsFromClipboard(e)
@@ -192,72 +183,82 @@ export function MuyaEditor({ tab, onInput, onSelection }: Props) {
         })
         .catch((err) => useToast.getState().show(`Image paste: ${err}`))
     }
-    host.addEventListener('paste', onPaste, true)
+
     // Dropped image files arrive via the webview-level drag-drop event, which
     // App forwards here as `notepad:drop-image`.
-    const onDropImage = (e: Event) => {
+    function onDropImage(e: Event) {
       const src = (e as CustomEvent<string>).detail
-      const docPath = useTabs.getState().tabs.find((t) => t.id === tab.id)?.path
-      if (!docPath) {
-        useToast.getState().show('Save the document first (⌘S) to attach images')
-        return
-      }
-      const docDir = docPath.split(/[\\/]/).slice(0, -1).join('/')
+      const docDir = requireDocDir()
+      if (!docDir) return
       // The drop is user consent — allow the source path, then import.
       void tauri
         .fsAllow(src)
         .then(() => tauri.imageImport(docDir, src))
-        .then((rel) => insertText(`![image](<${rel}>)`))
+        .then(insertImageMarkdown)
         .catch((err) => useToast.getState().show(`Image import: ${err}`))
     }
-    window.addEventListener('notepad:drop-image', onDropImage)
 
-    // Resolve relative/absolute image paths to asset:// URLs for display.
-    // Markdown source keeps portable paths; only the DOM src is rewritten.
-    const resolveImg = (img: HTMLImageElement) => {
-      const src = img.getAttribute('src') ?? ''
-      if (!src || /^(https?|data|blob|asset):/i.test(src)) return
-      if (img.dataset.resolved === src) return
-      const docPath = useTabs.getState().tabs.find((t) => t.id === tab.id)?.path
-      if (!docPath) return
-      const dir = docPath.split(/[\\/]/).slice(0, -1).join('/')
-      const abs = src.startsWith('/') || /^[A-Za-z]:[\\/]/.test(src) ? src : `${dir}${dir ? '/' : ''}${src}`
-      img.dataset.resolved = src
-      img.src = convertFileSrc(abs)
-    }
-    const observer = new MutationObserver(() => {
-      hostRef.current?.querySelectorAll('img').forEach(resolveImg)
-    })
-    observer.observe(host, { childList: true, subtree: true, attributes: true, attributeFilter: ['src'] })
-
-    return () => {
-      observer.disconnect()
-      host.removeEventListener('paste', onPaste, true)
+    function teardown() {
+      alive = false
+      hostRef.current?.removeEventListener('paste', onPaste, true)
       window.removeEventListener('notepad:drop-image', onDropImage)
       detachGhostText()
       clearTimeout(emitTimer)
       clearTimeout(typeTimer)
-      muya.off('json-change', debouncedEmit)
-      muya.off('selection-change', onSelChange)
+      if (muya) {
+        muya.off('json-change', debouncedEmit)
+        muya.off('selection-change', onSelChange)
+      }
       registerMuya(null)
       setActiveDocPath(null)
-      muya.destroy() // removes Muya's own editor div from the host
+      muya?.destroy() // removes Muya's own editor div from the host
       mount.remove() // no-op after destroy; guards a failed init
       muyaRef.current = null
     }
+
+    // Relative image srcs become data: URLs for RENDERING only — muya cannot
+    // load paths from the page origin, and its failed-image state sticks.
+    void addImageDataUrls(tab.markdown, tab.path).then((displayMarkdown) => {
+      if (!alive) return
+      const instance = new Muya(mount, {
+        markdown: displayMarkdown,
+        footnote: true,
+        math: true,
+        superSubScript: true,
+        spellcheckEnabled: false,
+        frontMatter: true,
+      })
+      instance.init()
+      muya = instance
+      muyaRef.current = instance
+      registerMuya(instance)
+      lastEmitted.current = tab.markdown
+      setActiveDocPath(tab.path)
+      instance.on('json-change', debouncedEmit)
+      instance.on('selection-change', onSelChange)
+    })
+
+    host.addEventListener('paste', onPaste, true)
+    window.addEventListener('notepad:drop-image', onDropImage)
+
+    return teardown
     // Editor is created once per tab mount; content flows in via the sync effect.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab.id])
 
   // --- external content changes (file open/reload/AI doc ops) ---
   useEffect(() => {
-    const muya = muyaRef.current
-    if (!muya) return
+    let gone = false
     if (tab.markdown !== lastEmitted.current) {
       lastEmitted.current = tab.markdown
-      muya.setContent(tab.markdown)
+      void addImageDataUrls(tab.markdown, tab.path).then((displayMarkdown) => {
+        if (!gone) muyaRef.current?.setContent(displayMarkdown)
+      })
     }
-  }, [tab.id, tab.markdown])
+    return () => {
+      gone = true
+    }
+  }, [tab.id, tab.markdown, tab.path])
 
   // --- option syncing ---
   useEffect(() => {

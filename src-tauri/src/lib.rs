@@ -49,6 +49,7 @@ pub fn run() {
             fs::image_import,
             fs::image_save_bytes,
             fs::paste_image,
+            fs::image_data,
             fs::save_recovery,
             fs::watch_start,
             fs::watch_stop,

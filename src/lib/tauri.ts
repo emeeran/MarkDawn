@@ -108,6 +108,8 @@ export const tauri = {
   /** Copy a dropped/picked image next to the document; returns the relative path. */
   imageImport: (docDir: string, src: string) =>
     invoke<string>('image_import', { docDir, src }),
+  /** One local image as a data: URL (guarded; asset protocol not used). */
+  imageData: (path: string) => invoke<string>('image_data', { path }),
   /** Write a pasted clipboard image next to the document; returns the relative path. */
   imageSaveBytes: (docDir: string, ext: string, bytes: Uint8Array) =>
     invoke<string>('image_save_bytes', { docDir, ext, bytes: Array.from(bytes) }),

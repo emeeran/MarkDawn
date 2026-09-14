@@ -322,6 +322,43 @@ pub fn paste_image(app: AppHandle, doc_dir: String) -> Result<Option<String>, St
         .map(Some)
 }
 
+/// One local image as a data: URL for editor display. The asset:// protocol
+/// proved unreliable on this WebKitGTK build, so the webview renders images
+/// from data URLs while the Markdown keeps portable relative paths.
+/// ponytail: whole-file in memory per render; cap keeps a stray paste from
+/// exhausting the webview — add streaming/disk cache if docs embed big media.
+#[tauri::command]
+pub fn image_data(path: String, guard: State<'_, FsGuard>) -> Result<String, String> {
+    const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
+    const MIME_BY_EXT: [(&str, &str); 6] = [
+        ("png", "image/png"),
+        ("jpg", "image/jpeg"),
+        ("jpeg", "image/jpeg"),
+        ("gif", "image/gif"),
+        ("webp", "image/webp"),
+        ("svg", "image/svg+xml"),
+    ];
+    let p = PathBuf::from(&path);
+    guard.check(&p)?;
+    let meta = fs::metadata(&p).map_err(|e| e.to_string())?;
+    if meta.len() > MAX_IMAGE_BYTES {
+        return Err("image too large to display".into());
+    }
+    let ext = p
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let mime = MIME_BY_EXT
+        .iter()
+        .find(|(e, _)| *e == ext)
+        .map(|(_, m)| *m)
+        .ok_or_else(|| "unsupported image type".to_string())?;
+    let bytes = fs::read(&p).map_err(|e| e.to_string())?;
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+    Ok(format!("data:{mime};base64,{b64}"))
+}
+
 /// Read the clipboard image via the OS tooling. Runs off-thread with a hard
 /// timeout: xclip occasionally wedges waiting on the X selection, and this is
 /// a sync command on the main thread — a hang here would freeze the app.
