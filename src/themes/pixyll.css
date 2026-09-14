@@ -9,7 +9,7 @@ html[data-theme='pixyll'] {
   --font: 'Merriweather', Georgia, 'Noto Serif', serif;
 }
 
-html[data-theme='pixyll'] .editor-host .muya-editor {
+html[data-theme='pixyll'] .editor-host .mu-editor {
   font-family: var(--font);
   line-height: 1.85;
   max-width: 720px;

@@ -9,7 +9,7 @@ html[data-theme='newsprint'] {
   --font: 'Georgia', 'Noto Serif', 'Times New Roman', serif;
 }
 
-html[data-theme='newsprint'] .editor-host .muya-editor {
+html[data-theme='newsprint'] .editor-host .mu-editor {
   font-family: var(--font);
   line-height: 1.7;
   color: #2b2620;

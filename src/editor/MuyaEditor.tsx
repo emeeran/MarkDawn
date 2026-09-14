@@ -29,9 +29,16 @@ export function MuyaEditor({ tab, onInput, onSelection }: Props) {
 
   // --- lifecycle: one Muya instance per mounted editor host ---
   useEffect(() => {
-    if (!hostRef.current) return
+    const host = hostRef.current
+    if (!host) return
     registerMuyaPlugins()
-    const muya = new Muya(hostRef.current, {
+    // Muya REPLACES the element it is handed with its own editor div, and
+    // destroy() removes that div. Hand it a throwaway child so React's
+    // managed host survives StrictMode double-mounts and tab switches —
+    // otherwise the second init renders into a detached node (blank editor).
+    const mount = document.createElement('div')
+    host.appendChild(mount)
+    const muya = new Muya(mount, {
       markdown: tab.markdown,
       footnote: true,
       math: true,
@@ -89,7 +96,7 @@ export function MuyaEditor({ tab, onInput, onSelection }: Props) {
     const observer = new MutationObserver(() => {
       hostRef.current?.querySelectorAll('img').forEach(resolveImg)
     })
-    observer.observe(hostRef.current, { childList: true, subtree: true, attributes: true, attributeFilter: ['src'] })
+    observer.observe(host, { childList: true, subtree: true, attributes: true, attributeFilter: ['src'] })
 
     return () => {
       observer.disconnect()
@@ -100,7 +107,8 @@ export function MuyaEditor({ tab, onInput, onSelection }: Props) {
       muya.off('selection-change', onSelChange)
       registerMuya(null)
       setActiveDocPath(null)
-      muya.destroy()
+      muya.destroy() // removes Muya's own editor div from the host
+      mount.remove() // no-op after destroy; guards a failed init
       muyaRef.current = null
     }
     // Editor is created once per tab mount; content flows in via the sync effect.

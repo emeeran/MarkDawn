@@ -8,7 +8,7 @@ html[data-theme='github'] {
   --panel-bg: #f6f8fa;
 }
 
-html[data-theme='github'] .editor-host .muya-editor {
+html[data-theme='github'] .editor-host .mu-editor {
   font-family: -apple-system, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
   line-height: 1.6;
 }

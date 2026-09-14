@@ -11,7 +11,7 @@ html[data-theme='night'] {
 
 html[data-theme='night'] body { color-scheme: dark; }
 
-html[data-theme='night'] .editor-host .muya-editor {
+html[data-theme='night'] .editor-host .mu-editor {
   font-family: var(--font);
   line-height: 1.6;
 }
