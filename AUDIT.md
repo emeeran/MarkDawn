@@ -85,3 +85,33 @@ its save fails). Neither blocks the author's daily use; both must be fixed befor
 - No hardcoded secrets; `dangerouslySetInnerHTML` sink is DOMPurify-sanitized by default (verified in the shipped bundle)
 - `atomic_write` (temp + rename) for documents/settings with tests covering contents and temp-litter
 - MuyaEditor teardown, watcher collector exit, and chat cancel state reset are all correct
+
+## Missed by pipeline, caught by blind review
+
+A sanitized cold-review pass (see `.pipeline/blind-review.md`) independently verified AUDIT.md's
+claims — all reproduce — and found the following genuine misses. Logged here as pipeline misses,
+not quietly patched:
+
+- **`src/stores/tabs.ts:22, 87-88` — one module-level autosave timer shared by every tab.** Typing in tab B within 500 ms cancels tab A's pending write; A stays unsaved until re-edited. Compounds every debounce/data-loss issue above. (High)
+- **`src/App.tsx:140-148` — external-change detection covers only the active tab.** Background tabs stay silently stale; their next autosave clobbers the newer file on disk. (High)
+- **`src-tauri/src/lib.rs:18` — cold-start file args ignored.** `notepad foo.md` works only as a second-instance event; first launch drops the argument. (Medium)
+- **`src-tauri/src/ai_proxy.rs:266-268` — a Groq-specific model recommendation hardcoded in the generic `post_stream` error path**, so it fires for every provider. (Medium)
+- **Cross-language rule drift**: `is_chat_model` (`ai_proxy.rs:219-224`) vs the migration regex (`settings.ts:22-24`) implement the same filter with different term lists; Ollama default URL also duplicated (`types.ts:80` / `ai_proxy.rs:43-45`). (Medium)
+- **`ai_proxy.rs:96-124` vs `144-162`** — Ollama model-listing body copy-pasted between command and helper. (Low)
+- **Pointless dynamic imports of statically imported modules** (`ChatPanel.tsx:31`, `registry.ts:128,131-134`, `CommandPalette.tsx:84`); `useWorkspaceOpen` (`CommandPalette.tsx:83`) named like a React hook; dead no-op `onClick` (`ChatPanel.tsx:75`). (Low)
+- **`e2e/smoke.spec.ts` is worse than dead** — it imports `{ t }` from `@playwright/test` and drives a Tauri app via Playwright's *Electron* launcher; pure false confidence. (Low, but upgrade the AUDIT wording)
+- **README drift is bigger than the test count**: also overclaims find features (case / whole-word not exposed by `FindBar.tsx:21`) and omits the Groq provider. (Low)
+- **Repo hygiene**: `.pipeline/`, `trash2review/`, `AUDIT.md`, `PLAN.md` are committed process scaffolding, not product. (Low)
+
+**Cross-confirmed (audit + blind review agree — higher confidence):** the tabs.close()/data-loss
+trio, no-flush-on-quit, `markSaved` race, the CSP/asset/fs-confinement trio, abort-map leak,
+per-chunk UTF-8 lossy decode, `ollama_url` SSRF, TTS temp files + surviving children, anthropic
+list_models status, FileTree filename validation, tts.rs duplicated block, dead e2e, no CI,
+key-ops without catch.
+
+**Open questions for the human (not silently resolved):**
+- Keep `PLAN.md` and the pipeline scaffolding (`.pipeline/`, `trash2review/`, `AUDIT.md`) in the
+  repo, or move to `trash2review` before any distribution build? Blind review flags them as
+  shipped-with-product; they were kept deliberately as project history.
+- e2e/smoke.spec.ts: finish it properly (tauri-driver + WebDriver) or move it to `trash2review`
+  until someone commits to running it?
