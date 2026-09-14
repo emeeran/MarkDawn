@@ -164,6 +164,6 @@ export function getCommands(): Command[] {
 
     cmd('app.settings', 'Open settings…', 'App', () => window.dispatchEvent(new CustomEvent('notepad:open-settings')), 'preferences keys api'),
     cmd('app.clearRecents', 'Clear recent history', 'App', () => window.dispatchEvent(new CustomEvent('notepad:clear-recents')), 'recents recent files clear'),
-    cmd('app.about', 'About Notepad', 'App', () => useToast.getState().show('Notepad — seamless Markdown with AI')),
+    cmd('app.about', 'About MarkDawn', 'App', () => useToast.getState().show('MarkDawn — seamless Markdown with AI')),
   ]
 }

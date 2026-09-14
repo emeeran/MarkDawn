@@ -81,7 +81,7 @@ pub fn run() {
             lifecycle::quit_now,
         ])
         .build(tauri::generate_context!())
-        .expect("error while building Notepad")
+        .expect("error while building MarkDawn")
         .run(|app, event| {
             if let RunEvent::ExitRequested { code, ref api, .. } = event {
                 lifecycle::handle_exit_requested(app, code, api);

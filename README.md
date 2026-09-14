@@ -1,4 +1,6 @@
-# Notepad
+# MarkDawn
+
+![logo](media/MarkDawn-Logo.png)
 
 A Typora-style seamless Markdown editor with AI built in. Tauri 2 + React + TypeScript,
 editor engine [Muya](https://github.com/marktext/muya) (`@muyajs/core` — the engine

@@ -4,6 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useRef, useState } from 'react'
 import type { ITocItem } from '@muyajs/core'
+import markDawnLogo from './assets/markdawn-logo.png'
 import { setSelection } from './ai/selection'
 import { FORMAT_ACTIONS, PARAGRAPH_ACTIONS } from './editor/inserts'
 import { MuyaEditor } from './editor/MuyaEditor'
@@ -316,7 +317,8 @@ function Welcome({ recents, onClearRecents }: { recents: string[]; onClearRecent
   const workspace = useWorkspace()
   return (
     <div className="welcome">
-      <h1>Notepad</h1>
+      <img src={markDawnLogo} alt="MarkDawn logo" className="welcome-logo" draggable={false} />
+      <h1>MarkDawn</h1>
       <p>Seamless Markdown, with AI inside.</p>
       <div className="welcome-actions">
         <button

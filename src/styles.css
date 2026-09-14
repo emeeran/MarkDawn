@@ -283,6 +283,8 @@ input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
 .ws-hit { gap: 10px; }
 .ws-hit .ws-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 
+.welcome-logo { max-width: 180px; width: 32%; height: auto; user-select: none; }
+
 .modal {
   margin-top: 10vh; width: 560px; max-width: 92vw; max-height: 78vh; overflow-y: auto;
   background: var(--bg); border: 1px solid var(--border); border-radius: 8px;

@@ -178,6 +178,6 @@ fn themes_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
 
 fn help_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
     let m = Submenu::new(app, "Help", true)?;
-    m.append_items(&[&item(app, "app.about", "About Notepad", None)?])?;
+    m.append_items(&[&item(app, "app.about", "About MarkDawn", None)?])?;
     Ok(m)
 }
