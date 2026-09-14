@@ -15,10 +15,15 @@ pub struct FileNode {
     is_dir: bool,
 }
 
-struct WatchState {
+pub struct WatchState {
     watcher: Option<RecommendedWatcher>,
     #[allow(dead_code)] // handle kept alive so the collector thread stays joined-able
     root: Option<PathBuf>,
+}
+
+/// Managed-state constructor (keeps internals private to this module).
+pub fn watch_state() -> WatchState {
+    WatchState { watcher: None, root: None }
 }
 
 /// Atomic write: temp file in the same directory, then rename over the target.
@@ -100,10 +105,12 @@ pub fn watch_start(
     state: State<'_, Mutex<WatchState>>,
 ) -> Result<(), String> {
     let app = app.clone();
-    let (tx, rx) = mpsc::channel::<notify::Result<std::path::PathBuf>>();
-    let mut watcher = notify::recommended_watcher(move |res| {
-        if let Ok(Ok(path)) = res {
-            let _ = tx.send(Ok(path));
+    let (tx, rx) = mpsc::channel::<std::path::PathBuf>();
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        if let Ok(event) = res {
+            for path in event.paths {
+                let _ = tx.send(path);
+            }
         }
     })
     .map_err(|e| e.to_string())?;

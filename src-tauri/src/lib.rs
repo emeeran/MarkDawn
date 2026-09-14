@@ -3,9 +3,6 @@ mod export;
 mod fs;
 mod secrets;
 
-use ai_proxy::AbortMap;
-use std::collections::HashMap;
-use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -25,8 +22,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .manage(Mutex::new(HashMap::<String, AbortHandle>::new()) as AbortMap)
-        .manage(Mutex::new(fs::WatchState { watcher: None, root: None }))
+        .manage(ai_proxy::abort_map())
+        .manage(fs::watch_state())
         .invoke_handler(tauri::generate_handler![
             fs::read_dir,
             fs::read_file,

@@ -31,7 +31,7 @@ pub fn secret_status() -> Result<BTreeMap<String, bool>, String> {
     let mut map = BTreeMap::new();
     for p in PROVIDERS {
         let ok = entry(p)
-            .and_then(|e| e.get_password().map(|_| ()))
+            .and_then(|e| e.get_password().map(|_| ()).map_err(|e| e.to_string()))
             .is_ok();
         map.insert(p.to_string(), ok);
     }

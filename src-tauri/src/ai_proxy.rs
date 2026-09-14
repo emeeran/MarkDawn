@@ -5,7 +5,6 @@ use std::sync::Mutex;
 use std::time::Duration;
 use tauri::ipc::Channel;
 use tauri::State;
-use tokio::task::AbortHandle;
 
 use crate::secrets;
 
@@ -45,7 +44,13 @@ fn default_ollama_url() -> String {
     "http://localhost:11434".into()
 }
 
-type AbortMap = Mutex<HashMap<String, AbortHandle>>;
+/// Handle type from tauri::async_runtime::spawn; supports abort().
+pub type AbortMap = Mutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>;
+
+/// Managed-state constructor.
+pub fn abort_map() -> AbortMap {
+    Mutex::new(HashMap::new())
+}
 
 fn client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
@@ -124,7 +129,7 @@ fn emit(ch: &Channel<AiEvent>, text: &str, sent: &mut usize, max: usize) -> Resu
     Ok(())
 }
 
-async fn post_stream(url: &str, builder: reqwest::RequestBuilder) -> Result<reqwest::Response, String> {
+async fn post_stream(builder: reqwest::RequestBuilder) -> Result<reqwest::Response, String> {
     let resp = builder.timeout(Duration::from_secs(600)).send().await.map_err(|e| e.to_string())?;
     let status = resp.status();
     if !status.is_success() {
@@ -148,7 +153,6 @@ async fn stream_anthropic(req: &AiRequest, ch: &Channel<AiEvent>) -> Result<(), 
             .collect::<Vec<_>>(),
     });
     let resp = post_stream(
-        url,
         client()?.post(url)
             .header("x-api-key", &key)
             .header("anthropic-version", "2023-06-01")
@@ -198,7 +202,6 @@ async fn stream_openai(req: &AiRequest, ch: &Channel<AiEvent>) -> Result<(), Str
     }
     let body = serde_json::json!({ "model": req.model, "stream": true, "messages": messages });
     let resp = post_stream(
-        url,
         client()?.post(url).header("Authorization", format!("Bearer {key}")).json(&body),
     ).await?;
 
@@ -237,7 +240,7 @@ async fn stream_ollama(req: &AiRequest, ch: &Channel<AiEvent>) -> Result<(), Str
         }
     }
     let body = serde_json::json!({ "model": req.model, "stream": true, "messages": messages });
-    let resp = post_stream(url, client()?.post(&url).json(&body)).await?;
+    let resp = post_stream(client()?.post(&url).json(&body)).await?;
 
     // Ollama streams NDJSON, not SSE.
     let mut stream = resp.bytes_stream();
