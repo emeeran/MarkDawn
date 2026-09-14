@@ -1,6 +1,6 @@
 [package]
 name = "markdawn"
-version = "0.1.0"
+version = "0.1.1"
 description = "MarkDawn — a Typora-style Markdown editor with AI integration"
 edition = "2021"
 rust-version = "1.77"
