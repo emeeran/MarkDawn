@@ -114,7 +114,13 @@ export const useTabs = create<TabsStore>((setState, get) => ({
     const id = get().activeId
     const tab = get().tabs.find((t) => t.id === id)
     if (!tab) return
-    const path = await save({ defaultPath: `${tab.title}.md`, filters: [{ name: 'Markdown', extensions: ['md'] }] })
+    const path = await save({
+      defaultPath: `${tab.title}.md`,
+      filters: [{ name: 'Markdown', extensions: ['md'] }],
+    }).catch((e) => {
+      useToast.getState().show(`Save as: ${e}`)
+      return null
+    })
     if (!path) return
     await tauri.writeFile(path, tab.markdown)
     setState((s) => ({

@@ -139,7 +139,11 @@ function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
 }
 
 async function pickFolder() {
-  const { open } = await import('@tauri-apps/plugin-dialog')
-  const dir = await open({ directory: true })
-  if (typeof dir === 'string') void useWorkspace.getState().openRoot(dir)
+  try {
+    const { open } = await import('@tauri-apps/plugin-dialog')
+    const dir = await open({ directory: true })
+    if (typeof dir === 'string') void useWorkspace.getState().openRoot(dir)
+  } catch (e) {
+    useToast.getState().show(`Open folder: ${e}`)
+  }
 }

@@ -19,13 +19,21 @@ export interface Command {
 }
 
 async function openFile() {
-  const path = await open({ multiple: false, filters: [{ name: 'Markdown', extensions: ['md', 'markdown', 'txt'] }] })
-  if (typeof path === 'string') void useTabs.getState().open(path)
+  try {
+    const path = await open({ multiple: false, filters: [{ name: 'Markdown', extensions: ['md', 'markdown', 'txt'] }] })
+    if (typeof path === 'string') void useTabs.getState().open(path)
+  } catch (e) {
+    useToast.getState().show(`Open file: ${e}`)
+  }
 }
 
 async function openFolder() {
-  const dir = await open({ directory: true })
-  if (typeof dir === 'string') void useWorkspace.getState().openRoot(dir)
+  try {
+    const dir = await open({ directory: true })
+    if (typeof dir === 'string') void useWorkspace.getState().openRoot(dir)
+  } catch (e) {
+    useToast.getState().show(`Open folder: ${e}`)
+  }
 }
 
 async function exportHtml() {
@@ -47,6 +55,9 @@ body{max-width:800px;margin:0 auto;padding:48px 24px;line-height:1.6}
   const path = await save({
     defaultPath: `${title.replace(/\.md$/, '')}.html`,
     filters: [{ name: 'HTML', extensions: ['html'] }],
+  }).catch((e) => {
+    useToast.getState().show(`Export: ${e}`)
+    return null
   })
   if (!path) return
   await tauri.writeFile(path, html)

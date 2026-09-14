@@ -55,15 +55,24 @@ export function App() {
     const unlisteners = [
       listen<string>('open-path', (e) => void useTabs.getState().open(e.payload)),
       listen<string[]>('fs-changed', (e) => handleFsChanged(e.payload)),
-      listen<{ action: string; extra?: string }>('notepad:transform', (e) => {
-        setSelStable(false)
-        setDiff({ ...e.payload, key: Date.now() })
-      }),
-      listen('notepad:open-settings', () => setSettingsOpen(true)),
       // Native menu (accelerators live Rust-side; no duplicate JS keybindings).
       listen<string>('menu-action', (e) => dispatchMenuAction(e.payload)),
     ]
-    return () => { unlisteners.forEach((u) => void u.then((f) => f())) }
+    // DOM CustomEvents from feature modules (NOT tauri IPC events — these must
+    // use window listeners; tauri listen() never sees them).
+    const onTransform = (e: Event) => {
+      const { action, extra } = (e as CustomEvent<{ action: string; extra?: string }>).detail
+      setSelStable(false)
+      setDiff({ action, extra, key: Date.now() })
+    }
+    const onOpenSettings = () => setSettingsOpen(true)
+    window.addEventListener('notepad:transform', onTransform)
+    window.addEventListener('notepad:open-settings', onOpenSettings)
+    return () => {
+      unlisteners.forEach((u) => void u.then((f) => f()))
+      window.removeEventListener('notepad:transform', onTransform)
+      window.removeEventListener('notepad:open-settings', onOpenSettings)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -104,6 +113,7 @@ export function App() {
       case 'tts.sel': return void readAloud('sel')
       case 'tts.cursor': return void readAloud('cursor')
       case 'tts.stop': return stopReading()
+      case 'app.settings': return setSettingsOpen(true)
       case 'view.palette': return setPalette('actions')
       case 'view.quickopen': return setPalette('files')
       case 'help.about': return useToast.getState().show('Notepad v0.1.0 — seamless Markdown with AI')
@@ -266,18 +276,22 @@ function Welcome({ recents }: { recents: string[] }) {
         <button
           className="primary"
           onClick={() =>
-            void openFileDialog({ directory: true }).then((d) => {
-              if (typeof d === 'string') void workspace.openRoot(d)
-            })
+            openFileDialog({ directory: true })
+              .then((d) => {
+                if (typeof d === 'string') void workspace.openRoot(d)
+              })
+              .catch((e) => useToast.getState().show(`Open folder: ${e}`))
           }
         >
           Open folder…
         </button>
         <button
           onClick={() =>
-            void openFileDialog({ multiple: false }).then((p) => {
-              if (typeof p === 'string') void tabs.open(p)
-            })
+            openFileDialog({ multiple: false })
+              .then((p) => {
+                if (typeof p === 'string') void tabs.open(p)
+              })
+              .catch((e) => useToast.getState().show(`Open file: ${e}`))
           }
         >
           Open file…

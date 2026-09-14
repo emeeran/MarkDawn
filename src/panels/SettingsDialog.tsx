@@ -116,6 +116,17 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             {voiceList.map((v) => <option key={v} value={v} />)}
           </datalist>
           <button onClick={() => void fetchVoices()}>Fetch voices</button>
+          <button
+            onClick={() =>
+              void tauri
+                .ttsSpeak('Read aloud is ready.', settings.ttsVoice || undefined)
+                .catch((e) => alert(`Read aloud: ${e}`))
+            }
+            disabled={ttsOk === false}
+            title="Speak a sample line with the configured voice"
+          >
+            Test
+          </button>
         </div>
 
         <h3>AI</h3>
