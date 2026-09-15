@@ -1,12 +1,12 @@
 # MarkDawn
 
-![logo](media/MarkDawn-Logo.png)
+<img title="" src="media/MarkDawn-Logo.png" alt="logo" width="639" data-align="inline">
 
 A Typora-style seamless Markdown editor with AI built in. Tauri 2 + React + TypeScript,
 editor engine [Muya](https://github.com/marktext/muya) (`@muyajs/core` — the engine
 extracted from MarkText, the open-source Typora clone).
 
-![status](https://img.shields.io/badge/status-v0.1.2-blue)
+
 
 ## Run it
 
@@ -30,6 +30,7 @@ Linux deb: `npm run deb` builds it and then patches the desktop entry to
 ## Features
 
 **Editor (Typora parity)**
+
 - Seamless live WYSIWYG Markdown — CommonMark + GFM, inline math (KaTeX), Mermaid,
   Vega-Lite, PlantUML, Prism code blocks, footnotes, front matter, tables
 - Tabs with per-tab autosave (500 ms debounce, atomic temp+rename writes), safe close
@@ -48,6 +49,7 @@ Linux deb: `npm run deb` builds it and then patches the desktop entry to
 - Drag `.md` files onto the window to open them; `markdawn foo.md` works on first launch
 
 **AI**
+
 - Provider-agnostic: Anthropic, OpenAI, Groq, Ollama (local). Keys live **only in the
   OS keychain** — they never reach the webview or settings.json; all HTTP runs in Rust
 - Chat sidebar with multi-turn memory (the last 10 messages ride along), document

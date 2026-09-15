@@ -18,6 +18,7 @@ export const useWorkspace = create<WorkspaceStore>((setState, get) => ({
   expanded: new Set(),
 
   async openRoot(path) {
+    await tauri.fsAllow(path) // user-picked → consented, else read_dir is rejected
     // A failed watcher must not block opening the folder (e.g. inotify
     // limits on huge trees) — degrade to unwatched.
     await tauri.watchStart(path).catch(() => {})
