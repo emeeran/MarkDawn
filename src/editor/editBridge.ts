@@ -33,7 +33,15 @@ export function setContent(markdown: string) {
  */
 export function insertText(text: string): boolean {
   if (!muya) return false
-  muya.focus()
+  // muya.focus() moves the caret to the START of the document (its only
+  // focus() does setCursor(0,0)), so only use it to recover a lost focus —
+  // never while the caret already lives in the editor (image paste, AI
+  // inserts, format wraps all arrive with the caret in place).
+  const el = document.activeElement
+  const focusedEntry = el instanceof HTMLElement && (el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')
+  if (focusedEntry ? !muya.domNode.contains(el) : !muya.domNode.contains(window.getSelection()?.anchorNode ?? null)) {
+    muya.focus()
+  }
   return document.execCommand('insertText', false, text)
 }
 

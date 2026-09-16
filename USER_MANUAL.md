@@ -161,7 +161,7 @@ Horizontal Rule (no shortcut).
 **Format menu** — ⌘B bold, ⌘I italic, ⌘⇧C inline code, ⌥⇧5 strikethrough,
 ⌘\\ clear formatting.
 
-**Edit menu** — native undo/redo/cut/copy/paste/select-all, ⌘F find & replace,
+**Edit menu** — undo/redo (editor history), native cut/copy/paste/select-all, ⌘F find & replace,
 ⌥⌘F search in workspace, and the Read Aloud submenu.
 
 Supported Markdown surface: CommonMark 0.31 + GFM, inline math (KaTeX),
@@ -176,9 +176,12 @@ Three ways in, one storage story:
 
 - **Paste** (⌘V) or **drag-drop** an image into the editor — the file is copied
   to `<document>_assets/` next to your document and referenced
-  document-relative, so the Markdown stays portable with its assets. Pasting
-  from the clipboard uses an OS-clipboard fallback (wl-paste → xclip) with a
-  3-second guard, which works around a WebKitGTK clipboard gap.
+  document-relative, so the Markdown stays portable with its assets. Pasted
+  images land at the caret and render immediately. Pasting from the clipboard
+  uses an OS-clipboard fallback (wl-paste → xclip) with a 3-second guard,
+  which works around a WebKitGTK clipboard gap; the fallback also reads
+  copied image *files* (`text/uri-list` / GNOME copied-files) when the
+  webview can't see them, and validates image magic bytes before writing.
 - **Picker** — the image insert picker references the picked file **in place**
   (it is *not* copied into the assets folder).
 - Resizing an image in the editor persists as an `<img>` tag with the original
@@ -349,6 +352,8 @@ same actions.)
 
 | | |
 | --- | --- |
+| Undo | ⌘Z |
+| Redo | ⌘⇧Z |
 | Find / Replace… | ⌘F |
 | Search in Workspace… | ⌥⌘F |
 
@@ -390,7 +395,16 @@ same actions.)
 | Command Palette… | ⌘K |
 | Quick Open… | ⌘P |
 
-Export and Read Aloud items have no shortcuts — use the menu or ⌘K.
+**Read Aloud**
+
+| | |
+| --- | --- |
+| Read Document | ⌘⇧R |
+| Read Selection | ⌥⌘R |
+| Read From Cursor | ⌥⌘⇧R |
+| Stop Reading | ⌥⌘S |
+
+Export items have no shortcuts — use the menu or ⌘K.
 
 ---
 

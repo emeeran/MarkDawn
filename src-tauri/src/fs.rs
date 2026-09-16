@@ -225,11 +225,7 @@ pub fn image_import(app: AppHandle, doc_dir: String, src: String) -> Result<Stri
     app.state::<FsGuard>().check(&dir)?;
     let src_path = PathBuf::from(&src);
     app.state::<FsGuard>().check(&src_path)?;
-    let ext = src_path
-        .extension()
-        .map(|e| e.to_string_lossy().to_lowercase())
-        .filter(|e| ["png", "jpg", "jpeg", "gif", "svg", "webp"].contains(&e.as_str()))
-        .ok_or_else(|| "unsupported image type".to_string())?;
+    let ext = src_ext(&src_path)?;
     import_image_inner(&dir, ext, |dest| fs::copy(&src_path, dest).map(|_| ()).map_err(|e| e.to_string()))
 }
 
@@ -314,12 +310,47 @@ pub fn save_recovery(app: AppHandle, title: String, contents: String) -> Result<
 #[tauri::command]
 pub fn paste_image(app: AppHandle, doc_dir: String) -> Result<Option<String>, String> {
     let dir = PathBuf::from(&doc_dir);
-    app.state::<FsGuard>().check(&dir)?;
-    let Some((bytes, ext)) = read_clipboard_image() else {
+    let guard = app.state::<FsGuard>();
+    guard.check(&dir)?;
+    let Some(clip) = read_clipboard_image() else {
         return Ok(None);
     };
-    import_image_inner(&dir, ext, |dest| fs::write(dest, bytes.as_slice()).map_err(|e| e.to_string()))
-        .map(Some)
+    match clip {
+        ClipboardImage::Bytes(bytes, ext) => import_image_inner(&dir, ext, |dest| {
+            fs::write(dest, bytes.as_slice()).map_err(|e| e.to_string())
+        })
+        .map(Some),
+        ClipboardImage::File(src) => {
+            // A paste is user consent for the source — same as the JS path's
+            // fsAllow(src) before image_import.
+            guard.allow(&src);
+            import_image_inner(&dir, src_ext(&src)?, |dest| {
+                fs::write(dest, clip_file_bytes(&src)?).map_err(|e| e.to_string())
+            })
+            .map(Some)
+        }
+    }
+}
+
+fn src_ext(p: &Path) -> Result<String, String> {
+    p.extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .filter(|e| ["png", "jpg", "jpeg", "gif", "svg", "webp"].contains(&e.as_str()))
+        .ok_or_else(|| "unsupported image type".to_string())
+}
+
+fn clip_file_bytes(src: &Path) -> Result<Vec<u8>, String> {
+    let bytes = fs::read(src).map_err(|e| e.to_string())?;
+    sniff_image(&bytes)
+        .map(|_| bytes)
+        .ok_or_else(|| "clipboard file is not a valid image".into())
+}
+
+/// What the OS clipboard offered: a raw bitmap, or an image file referenced by
+/// a copied uri list (file managers).
+enum ClipboardImage {
+    Bytes(Vec<u8>, String),
+    File(PathBuf),
 }
 
 /// One local image as a data: URL for editor display. The asset:// protocol
@@ -364,7 +395,7 @@ pub fn image_data(path: String, guard: State<'_, FsGuard>) -> Result<String, Str
 /// a sync command on the main thread — a hang here would freeze the app.
 /// ponytail: on timeout the reader thread leaks until its child exits; rare
 /// and harmless, vs. adding async+Channel plumbing for a fallback path.
-fn read_clipboard_image() -> Option<(Vec<u8>, String)> {
+fn read_clipboard_image() -> Option<ClipboardImage> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         tx.send(read_clipboard_image_inner()).ok();
@@ -372,15 +403,15 @@ fn read_clipboard_image() -> Option<(Vec<u8>, String)> {
     rx.recv_timeout(Duration::from_secs(3)).unwrap_or(None)
 }
 
-fn read_clipboard_image_inner() -> Option<(Vec<u8>, String)> {
-    // (program, args, extension) — first attempt that yields non-empty output wins.
-    let attempts: [(&str, Vec<&str>, &str); 4] = [
-        ("wl-paste", vec!["--no-newline", "--type", "image/png"], "png"),
-        ("wl-paste", vec!["--no-newline", "--type", "image/jpeg"], "jpg"),
-        ("xclip", vec!["-selection", "clipboard", "-o", "-t", "image/png"], "png"),
-        ("xclip", vec!["-selection", "clipboard", "-o", "-t", "image/jpeg"], "jpg"),
+fn read_clipboard_image_inner() -> Option<ClipboardImage> {
+    // (program, args) — first attempt that yields a real bitmap wins.
+    let bitmap_attempts: [(&str, Vec<&str>); 4] = [
+        ("wl-paste", vec!["--no-newline", "--type", "image/png"]),
+        ("wl-paste", vec!["--no-newline", "--type", "image/jpeg"]),
+        ("xclip", vec!["-selection", "clipboard", "-o", "-t", "image/png"]),
+        ("xclip", vec!["-selection", "clipboard", "-o", "-t", "image/jpeg"]),
     ];
-    for (prog, args, ext) in attempts {
+    for (prog, args) in bitmap_attempts {
         let Ok(out) = std::process::Command::new(prog)
             .args(&args)
             .stdout(std::process::Stdio::piped())
@@ -390,10 +421,80 @@ fn read_clipboard_image_inner() -> Option<(Vec<u8>, String)> {
             continue; // tool not installed
         };
         if out.status.success() && !out.stdout.is_empty() {
-            return Some((out.stdout, ext.to_string()));
+            // Some owners answer ANY requested target (xclip hands back its
+            // stored uri text when asked for image/png) — trust magic bytes,
+            // not the target name.
+            if let Some(ext) = sniff_image(&out.stdout) {
+                return Some(ClipboardImage::Bytes(out.stdout, ext.into()));
+            }
+        }
+    }
+
+    // No bitmap: a copied image FILE rides the clipboard as uri lists
+    // (text/uri-list, GNOME's x-special/gnome-copied-files), which WebKitGTK
+    // sometimes hides from the webview entirely — parse them here instead.
+    let uri_attempts: [(&str, Vec<&str>); 4] = [
+        ("wl-paste", vec!["--type", "text/uri-list"]),
+        ("wl-paste", vec!["--type", "x-special/gnome-copied-files"]),
+        ("xclip", vec!["-selection", "clipboard", "-o", "-t", "text/uri-list"]),
+        ("xclip", vec!["-selection", "clipboard", "-o", "-t", "x-special/gnome-copied-files"]),
+    ];
+    for (prog, args) in uri_attempts {
+        let Ok(out) = std::process::Command::new(prog)
+            .args(&args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .output()
+        else {
+            continue;
+        };
+        if !out.status.success() || out.stdout.is_empty() {
+            continue;
+        }
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            let line = line.trim();
+            if line.is_empty() || line.eq_ignore_ascii_case("copy") {
+                continue;
+            }
+            let path = percent_decode(line.strip_prefix("file://").unwrap_or(line));
+            let p = PathBuf::from(&path);
+            if src_ext(&p).is_ok() && p.is_file() {
+                return Some(ClipboardImage::File(p));
+            }
         }
     }
     None
+}
+
+/// Magic-byte sniff — the clipboard target name lies (see bitmap_attempts).
+fn sniff_image(b: &[u8]) -> Option<&'static str> {
+    match b {
+        [0x89, b'P', b'N', b'G', ..] => Some("png"),
+        [0xFF, 0xD8, ..] => Some("jpg"),
+        [b'G', b'I', b'F', b'8', ..] => Some("gif"),
+        [b'R', b'I', b'F', b'F', ..] if b.len() > 11 && &b[8..12] == b"WEBP" => Some("webp"),
+        _ if b.starts_with(b"<?xml") || b.starts_with(b"<svg") => Some("svg"),
+        _ => None,
+    }
+}
+
+/// Minimal percent-decode for file:// paths (std-only; %XX → byte, rest kept).
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 3 <= bytes.len() {
+            if let Ok(v) = u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Watch a workspace root and emit debounced `fs-changed` events.
@@ -668,6 +769,24 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("notepad-test-{name}-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn sniff_rejects_text_masquerading_as_image_targets() {
+        assert_eq!(sniff_image(b"\x89PNG\r\n\x1a\n"), Some("png"));
+        assert_eq!(sniff_image(b"\xff\xd8\xff\xe0"), Some("jpg"));
+        assert_eq!(sniff_image(b"GIF89a"), Some("gif"));
+        assert_eq!(sniff_image(b"<svg xmlns="), Some("svg"));
+        // xclip hands back uri text for ANY requested target — must not pass.
+        assert_eq!(sniff_image(b"file:///tmp/pic.png"), None);
+    }
+
+    #[test]
+    fn percent_decode_handles_uris_and_keeps_plain_paths() {
+        assert_eq!(percent_decode("/tmp/my%20pic.png"), "/tmp/my pic.png");
+        assert_eq!(percent_decode("/tmp/%C3%A9.png"), "/tmp/é.png");
+        assert_eq!(percent_decode("/tmp/plain.png"), "/tmp/plain.png");
+        assert_eq!(percent_decode("50%off.png"), "50%off.png"); // bad escape kept
     }
 
     #[test]

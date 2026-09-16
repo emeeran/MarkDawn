@@ -81,8 +81,10 @@ fn edit_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
     let m = Submenu::new(app, "Edit", true)?;
     let read_aloud = read_aloud_menu(app)?;
     m.append_items(&[
-        &PredefinedMenuItem::undo(app, None)?,
-        &PredefinedMenuItem::redo(app, None)?,
+        // Real items, not PredefinedMenuItem::undo/redo — those are no-ops on
+        // Linux; undo/redo must reach the webview and drive Muya's history.
+        &item(app, "edit.undo", "Undo", Some("CmdOrCtrl+Z"))?,
+        &item(app, "edit.redo", "Redo", Some("Shift+CmdOrCtrl+Z"))?,
         &sep(app)?,
         &PredefinedMenuItem::cut(app, None)?,
         &PredefinedMenuItem::copy(app, None)?,
@@ -100,11 +102,11 @@ fn edit_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
 fn read_aloud_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
     let m = Submenu::new(app, "Read Aloud", true)?;
     m.append_items(&[
-        &item(app, "tts.doc", "Read Document", None)?,
-        &item(app, "tts.sel", "Read Selection", None)?,
-        &item(app, "tts.cursor", "Read From Cursor", None)?,
+        &item(app, "tts.doc", "Read Document", Some("CmdOrCtrl+Shift+R"))?,
+        &item(app, "tts.sel", "Read Selection", Some("CmdOrCtrl+Alt+R"))?,
+        &item(app, "tts.cursor", "Read From Cursor", Some("CmdOrCtrl+Alt+Shift+R"))?,
         &sep(app)?,
-        &item(app, "tts.stop", "Stop Reading", None)?,
+        &item(app, "tts.stop", "Stop Reading", Some("CmdOrCtrl+Alt+S"))?,
     ])?;
     Ok(m)
 }

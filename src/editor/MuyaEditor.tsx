@@ -89,7 +89,16 @@ export function MuyaEditor({ tab, onInput, onSelection }: Props) {
       }
       return docPath.split(/[\\/]/).slice(0, -1).join('/')
     }
-    const insertImageMarkdown = (rel: string) => insertText(`![image](${encodeURI(rel)})`) // muya can't parse <...> destinations
+    // muya can't parse <...> destinations, hence encodeURI. The editor renders
+    // data: URLs (relative paths can't load) — transform before inserting so
+    // the image shows immediately; emitChange strips back to the relative path.
+    const insertImageMarkdown = (rel: string) => {
+      const docPath = useTabs.getState().tabs.find((t) => t.id === tab.id)?.path
+      const md = `![image](${encodeURI(rel)})`
+      void addImageDataUrls(md, docPath ?? null)
+        .catch(() => md)
+        .then((rendered) => insertText(rendered))
+    }
 
     /** Import a user-consented source file into the doc assets, then insert. */
     function importFile(docDir: string, src: string) {

@@ -1,7 +1,7 @@
 import { renderToStaticHTML } from '@muyajs/core'
 import { readAloud, stopReading } from '../ai/tts'
 import { runSelectionTransform } from '../ai/transform'
-import { getMarkdown, getTOC } from '../editor/editBridge'
+import { getMarkdown, getMuya, getTOC } from '../editor/editBridge'
 import { pickFile, pickFolder, pickSaveFile, tauri } from '../lib/tauri'
 import { useChat } from '../stores/chat'
 import { useSettings } from '../stores/settings'
@@ -127,6 +127,8 @@ export function getCommands(): Command[] {
     cmd('file.closeTab', 'Close tab', 'File', () => { if (tabs.activeId) void tabs.close(tabs.activeId) }),
     cmd('file.reopenTab', 'Reopen closed tab', 'File', () => void tabs.reopenClosed(), 'undo close'),
 
+    cmd('edit.undo', 'Undo', 'Edit', () => getMuya()?.undo(), 'revert last action'),
+    cmd('edit.redo', 'Redo', 'Edit', () => getMuya()?.redo(), 're-apply undone'),
     cmd('edit.find', `${settings.findOpen ? '✓ ' : ''}Find / Replace`, 'Edit', () => settings.set('findOpen', !settings.findOpen)),
     cmd('edit.searchWorkspace', 'Search in workspace…', 'Edit', () => settings.set('workspaceSearchOpen', true), 'grep find across files'),
 

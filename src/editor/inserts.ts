@@ -1,35 +1,29 @@
 import { getSelection } from '../ai/selection'
-import { getMuya, insertMarkdown, insertText } from './editBridge'
+import { insertMarkdown, insertText } from './editBridge'
 
 /**
  * Paragraph/Format menu actions. Line prefixes insert at the caret (correct
  * when the caret is on the line being converted — Typora converts the whole
  * paragraph, we approximate; multi-block inserts go through the paste bridge).
+ * No explicit focus() here: muya's focus() moves the caret to doc start —
+ * insertText re-focuses only when focus was genuinely lost.
  */
 
-function focusEditor() {
-  getMuya()?.focus()
-}
-
 export function insertLinePrefix(prefix: string) {
-  focusEditor()
   insertText(prefix)
 }
 
 export function insertBlock(markdown: string) {
-  focusEditor()
   void insertMarkdown(markdown)
 }
 
 export function wrapSelection(marker: string) {
-  focusEditor()
   const sel = getSelection().text
   if (sel) insertText(`${marker}${sel}${marker}`)
   else insertText(`${marker}${marker}`)
 }
 
 export function clearFormatting() {
-  focusEditor()
   const sel = getSelection().text
   if (!sel) return
   insertText(sel.replace(/(\*\*|__|\*|_|~~|`|==)/g, ''))
