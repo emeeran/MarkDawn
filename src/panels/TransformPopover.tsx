@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { stream } from '../ai/client'
 import { wordDiff } from '../ai/diff'
 import { getSelection } from '../ai/selection'
+
 import { BASE_SYSTEM, buildTransformPrompt, QUICK_ACTIONS } from '../ai/prompts'
 import { replaceSelection } from '../editor/editBridge'
 import { useToast } from '../stores/toast'
@@ -48,10 +49,12 @@ export function SelectionActionBar({ rect, onAction }: { rect: Rect; onAction: (
 /** Streaming old-vs-new diff card. `request` comes from a quick action or the palette. */
 export function DiffPopover({
   request,
+  range,
   selRect,
   onClose,
 }: {
   request: { action: string; extra?: string }
+  range: Range | null
   selRect: Rect
   onClose: () => void
 }) {
@@ -90,15 +93,10 @@ export function DiffPopover({
   }
 
   async function apply() {
-    // The diff was computed against a frozen snapshot; only apply if the
-    // selection still is that text (otherwise the edit lands in the wrong place).
-    const current = getSelection().text.trim()
-    if (current !== original) {
-      useToast.getState().show('Selection changed — reselect and retry')
-      onClose()
-      return
-    }
-    const ok = await replaceSelection(result.trim())
+    // Replace exactly the span that was selected when the action fired: the
+    // frozen range is re-pinned by the edit bridge before inserting, so a
+    // collapsed or moved live selection can't misplace the edit.
+    const ok = await replaceSelection(result.trim(), range)
     if (!ok) useToast.getState().show('Could not apply the edit')
     onClose()
   }

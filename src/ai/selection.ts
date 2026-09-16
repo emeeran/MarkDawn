@@ -29,3 +29,22 @@ export function readDomSelection(): SelectionInfo {
         : null,
   }
 }
+
+/**
+ * Freeze the live DOM selection so a deferred edit (streaming AI diff) can
+ * re-target the exact range later, even if the live selection collapses in
+ * between. Cloned — a live Range would silently follow DOM mutations.
+ */
+export function captureRange(): Range | null {
+  const sel = window.getSelection()
+  return sel && sel.rangeCount > 0 ? sel.getRangeAt(0).cloneRange() : null
+}
+
+export function restoreRange(range: Range | null): boolean {
+  if (!range) return false
+  const sel = window.getSelection()
+  if (!sel) return false
+  sel.removeAllRanges()
+  sel.addRange(range)
+  return true
+}

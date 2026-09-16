@@ -157,6 +157,7 @@ export function getCommands(): Command[] {
     cmd('export.rtf', 'Export → RTF (pandoc)', 'Export', () => void exportPandoc('rtf')),
     cmd('export.epub', 'Export → EPUB (pandoc)', 'Export', () => void exportPandoc('epub')),
 
+    cmd('ai.humanize', 'AI → Humanize selection', 'AI', () => void runSelectionTransform('humanize'), 'natural human rewrite'),
     cmd('ai.improve', 'AI → Improve selection', 'AI', () => void runSelectionTransform('improve'), 'transform rewrite'),
     cmd('ai.grammar', 'AI → Fix grammar in selection', 'AI', () => void runSelectionTransform('grammar')),
     cmd('ai.continue', 'AI → Continue writing', 'AI', continueWriting),

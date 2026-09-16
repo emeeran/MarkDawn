@@ -5,7 +5,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useRef, useState } from 'react'
 import type { ITocItem } from '@muyajs/core'
 import markDawnLogo from './assets/markdawn-logo.png'
-import { setSelection } from './ai/selection'
+import { captureRange, readDomSelection, setSelection } from './ai/selection'
+import { runSelectionTransform } from './ai/transform'
 import { FORMAT_ACTIONS, PARAGRAPH_ACTIONS } from './editor/inserts'
 import { MuyaEditor } from './editor/MuyaEditor'
 import { getCommands } from './commands/registry'
@@ -30,6 +31,7 @@ import type { SelectionInfo, ThemeId } from './types'
 interface DiffRequest {
   action: string
   extra?: string
+  range: Range | null
   key: number
 }
 
@@ -64,6 +66,7 @@ export function App() {
   const [diff, setDiff] = useState<DiffRequest | null>(null)
   const selStableTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [selStable, setSelStable] = useState(false)
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
 
   const activeTab = tabs.find((t) => t.id === activeId) ?? null
 
@@ -113,9 +116,9 @@ export function App() {
     // DOM CustomEvents from feature modules (NOT tauri IPC events — these must
     // use window listeners; tauri listen() never sees them).
     const onTransform = (e: Event) => {
-      const { action, extra } = (e as CustomEvent<{ action: string; extra?: string }>).detail
+      const { action, extra, range } = (e as CustomEvent<{ action: string; extra?: string; range: Range | null }>).detail
       setSelStable(false)
-      setDiff({ action, extra, key: Date.now() })
+      setDiff({ action, extra, range, key: Date.now() })
     }
     const onOpenSettings = () => setSettingsOpen(true)
     const onClearRecents = () => clearRecents()
@@ -131,6 +134,32 @@ export function App() {
       window.removeEventListener('notepad:clear-recents', onClearRecents)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // --- editor right-click menu (selection actions; plain right-click is untouched) ---
+  useEffect(() => {
+    const onCtx = (e: MouseEvent) => {
+      if (useSettings.getState().sourceMode || !readDomSelection().text.trim()) {
+        setCtxMenu(null)
+        return
+      }
+      e.preventDefault()
+      setCtxMenu({ x: e.clientX, y: e.clientY })
+    }
+    const close = (e: MouseEvent) => {
+      if (!(e.target as Element).closest?.('.transform-popover')) setCtxMenu(null)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setCtxMenu(null)
+    }
+    window.addEventListener('contextmenu', onCtx)
+    window.addEventListener('mousedown', close)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('contextmenu', onCtx)
+      window.removeEventListener('mousedown', close)
+      window.removeEventListener('keydown', onKey)
+    }
   }, [])
 
   // --- theme (auto follows the OS) + typography vars ---
@@ -288,7 +317,7 @@ export function App() {
               rect={selUi.rect}
               onAction={(action, extra) => {
                 setSelStable(false)
-                setDiff({ action, extra, key: Date.now() })
+                setDiff({ action, extra, range: captureRange(), key: Date.now() })
               }}
             />
           )}
@@ -296,9 +325,18 @@ export function App() {
             <DiffPopover
               key={diff.key}
               request={{ action: diff.action, extra: diff.extra }}
+              range={diff.range}
               selRect={selUi.rect}
               onClose={() => setDiff(null)}
             />
+          )}
+          {ctxMenu && (
+            <div className="transform-popover" style={{ top: ctxMenu.y, left: Math.min(ctxMenu.x, window.innerWidth - 130) }}>
+              <button onClick={() => {
+                setCtxMenu(null)
+                runSelectionTransform('humanize')
+              }}>Humanize</button>
+            </div>
           )}
         </div>
 
