@@ -85,6 +85,40 @@ export async function replaceSelection(markdown: string, range?: Range | null): 
   return insertMarkdown(markdown, range)
 }
 
+/** Which clipboard text a copy/cut should yield: Muya's markdown form of the
+ *  selection wins, the raw DOM selection is the fallback (e.g. right after a
+ *  programmatic select-all, before Muya's model resyncs), and text selected
+ *  OUTSIDE the editor (chat panel, outline) must never be shadowed by it. */
+export function pickCopySource(inEditor: boolean, muyaText: string, selText: string): string {
+  return (inEditor ? muyaText : '') || selText
+}
+
+/**
+ * Run Muya's own copy/cut handler synthetically and return the text it put on
+ * the (simulated) clipboard — the Markdown form of the selection. Cut also
+ * deletes the selection through Muya's history-tracked path, same as the
+ * native event. Empty string = Muya had no selection to work with.
+ */
+export function muyaClipboardCopyCut(op: 'copy' | 'cut'): string {
+  if (!muya) return ''
+  const dt = new DataTransfer()
+  const evt = new ClipboardEvent(op, { clipboardData: dt, bubbles: true, cancelable: true })
+  muya.domNode.dispatchEvent(evt)
+  return dt.getData('text/plain') ?? ''
+}
+
+/** Select the whole editor document as a DOM selection (Ctrl+A / menu Select All). */
+export function selectAllInEditor(): boolean {
+  if (!muya) return false
+  const sel = window.getSelection()
+  if (!sel) return false
+  const range = document.createRange()
+  range.selectNodeContents(muya.domNode)
+  sel.removeAllRanges()
+  sel.addRange(range)
+  return true
+}
+
 // --- find/replace (thin wrappers over Muya's built-in engine) ---
 
 export interface FindOpts {

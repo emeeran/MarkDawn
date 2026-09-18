@@ -466,6 +466,84 @@ fn read_clipboard_image_inner() -> Option<ClipboardImage> {
     None
 }
 
+// --- clipboard text (Edit menu Cut/Copy/Paste) --------------------------------
+//
+// muda's PredefinedMenuItem::copy/cut/paste are no-ops on Linux (the activate
+// handler is compiled out without libxdo, and X11-only even with it), and
+// menu events reach the webview without user activation, so execCommand-based
+// clipboard writes are unreliable too. Drive the OS clipboard from here with
+// the same CLI tooling as the image path above.
+// ponytail: CLI clipboard tools, not a gtk/arboard dependency; macOS/Windows
+// can use the webview clipboard natively and don't need this path.
+
+/// Copy `text` to the system clipboard (wl-copy on Wayland, xclip on X11).
+#[tauri::command]
+pub fn clipboard_write_text(text: String) -> Result<(), String> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || tx.send(write_clipboard_text_inner(&text)).ok());
+    rx.recv_timeout(Duration::from_secs(3))
+        .unwrap_or(Err("clipboard write timed out".into()))
+}
+
+fn write_clipboard_text_inner(text: &str) -> Result<(), String> {
+    use std::io::Write as _;
+    let attempts: [(&str, Vec<&str>); 2] = [
+        ("wl-copy", vec!["--type", "text/plain"]),
+        ("xclip", vec!["-selection", "clipboard", "-i"]),
+    ];
+    for (prog, args) in attempts {
+        let Ok(mut child) = std::process::Command::new(prog)
+            .args(&args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        else {
+            continue; // tool not installed
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        // wl-copy/xclip fork to keep serving the selection; the parent's exit
+        // status is the only check available.
+        match child.wait() {
+            Ok(s) if s.success() => return Ok(()),
+            _ => continue,
+        }
+    }
+    Err("no clipboard tool found (install xclip or wl-clipboard)".into())
+}
+
+/// Read text from the system clipboard; None when it holds no text.
+#[tauri::command]
+pub fn clipboard_read_text() -> Result<Option<String>, String> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || tx.send(read_clipboard_text_inner()).ok());
+    Ok(rx.recv_timeout(Duration::from_secs(3)).unwrap_or(None))
+}
+
+fn read_clipboard_text_inner() -> Option<String> {
+    let attempts: [(&str, Vec<&str>); 3] = [
+        ("wl-paste", vec!["--no-newline", "--type", "text/plain"]),
+        ("xclip", vec!["-selection", "clipboard", "-o", "-t", "text/plain"]),
+        ("xclip", vec!["-selection", "clipboard", "-o"]),
+    ];
+    for (prog, args) in attempts {
+        let Ok(out) = std::process::Command::new(prog)
+            .args(&args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .output()
+        else {
+            continue;
+        };
+        if out.status.success() && !out.stdout.is_empty() {
+            return Some(String::from_utf8_lossy(&out.stdout).into_owned());
+        }
+    }
+    None
+}
+
 /// Magic-byte sniff — the clipboard target name lies (see bitmap_attempts).
 fn sniff_image(b: &[u8]) -> Option<&'static str> {
     match b {

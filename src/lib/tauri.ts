@@ -82,10 +82,17 @@ export const tauri = {
   exportPandoc: (src: string, format: string) =>
     cmdWithChannel<string>('export_pandoc', { src, format }),
 
+  /** OS clipboard via the Rust bridge (WebKitGTK clipboard writes are unreliable). */
+  clipboardWriteText: (text: string) => invoke<void>('clipboard_write_text', { text }),
+  clipboardReadText: () => invoke<string | null>('clipboard_read_text'),
+
   ttsAvailable: () => invoke<boolean>('tts_available'),
   ttsVoices: () => cmdWithChannel<string[]>('tts_voices'),
-  ttsSpeak: (text: string, voice?: string, rate?: string, pitch?: string, volume?: string) =>
-    cmdWithChannel<boolean>('tts_speak', { text, voice, rate, pitch, volume }),
+  /** Synthesize to a temp mp3; resolves with its path. */
+  ttsSynth: (text: string, voice?: string, rate?: string, pitch?: string, volume?: string) =>
+    cmdWithChannel<string>('tts_synth', { text, voice, rate, pitch, volume }),
+  /** Resolves when playback finishes with the player used ("xdg-open" = unpaced). */
+  ttsPlay: (mp3: string) => cmdWithChannel<string>('tts_play', { mp3 }),
   ttsStop: () => invoke<void>('tts_stop'),
 
   storeGet: (name: string) => invoke<Record<string, unknown>>('store_get', { name }),

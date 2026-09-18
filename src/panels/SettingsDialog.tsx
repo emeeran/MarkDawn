@@ -99,14 +99,15 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
 
   function previewVoice() {
     void tauri
-      .ttsSpeak(
+      .ttsSynth(
         'Read aloud is ready. This is how your voice settings sound.',
         settings.ttsVoice || undefined,
         settings.ttsRate,
         settings.ttsPitch,
         settings.ttsVolume,
       )
-      .catch((e) => useToast.getState().show(`Read aloud: ${e}`))
+      .then((mp3) => tauri.ttsPlay(mp3))
+      .catch((e: unknown) => useToast.getState().show(`Read aloud: ${e}`))
   }
 
   const pct = (v: string) => Number(v.replace(/[+%]/g, '')) || 0

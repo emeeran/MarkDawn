@@ -8,6 +8,7 @@ import type { ITocItem } from '@muyajs/core'
 import type { SelectionInfo, Tab } from '../types'
 import { readDomSelection, setSelection } from '../ai/selection'
 import { insertText, registerMuya } from './editBridge'
+import { editOp } from '../commands/registry'
 import { addImageDataUrls, stripImageDataUrls } from './imageMap'
 import { registerMuyaPlugins, setActiveDocPath } from './muyaSetup'
 import { attachGhostText, detachGhostText, requestGhost, scheduleGhost } from './ghostText'
@@ -207,9 +208,28 @@ export function MuyaEditor({ tab, onInput, onSelection }: Props) {
         .catch((err) => useToast.getState().show(`Image import: ${err}`))
     }
 
+    // Ctrl+C/X/A handled here so clipboard keys work regardless of WebKitGTK's
+    // native bindings (copy was dead on this build). Host-scoped: keys in the
+    // chat input, find bar, and dialogs keep their normal field behavior.
+    // Paste (Ctrl+V) is left native — WebKit delivers it with the clipboard
+    // payload and Muya + onPaste handle it, images included.
+    function onCopyKey(e: KeyboardEvent) {
+      if (!e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return
+      const op = { c: 'copy', x: 'cut', a: 'selectAll' }[e.key.toLowerCase()] as
+        | 'copy'
+        | 'cut'
+        | 'selectAll'
+        | undefined
+      if (!op) return
+      e.preventDefault()
+      e.stopPropagation()
+      editOp(op)
+    }
+
     function teardown() {
       alive = false
       hostRef.current?.removeEventListener('paste', onPaste, true)
+      hostRef.current?.removeEventListener('keydown', onCopyKey, true)
       window.removeEventListener('notepad:drop-image', onDropImage)
       detachGhostText()
       clearTimeout(emitTimer)
@@ -248,6 +268,7 @@ export function MuyaEditor({ tab, onInput, onSelection }: Props) {
     })
 
     host.addEventListener('paste', onPaste, true)
+    host.addEventListener('keydown', onCopyKey, true)
     window.addEventListener('notepad:drop-image', onDropImage)
 
     return teardown

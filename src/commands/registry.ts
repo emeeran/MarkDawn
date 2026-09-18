@@ -1,7 +1,15 @@
 import { renderToStaticHTML } from '@muyajs/core'
 import { readAloud, stopReading } from '../ai/tts'
 import { runSelectionTransform } from '../ai/transform'
-import { getMarkdown, getMuya, getTOC } from '../editor/editBridge'
+import {
+  getMarkdown,
+  getMuya,
+  getTOC,
+  insertMarkdown,
+  muyaClipboardCopyCut,
+  pickCopySource,
+  selectAllInEditor,
+} from '../editor/editBridge'
 import { pickFile, pickFolder, pickSaveFile, tauri } from '../lib/tauri'
 import { useChat } from '../stores/chat'
 import { useSettings } from '../stores/settings'
@@ -93,6 +101,61 @@ async function exportPandoc(format: string) {
   }
 }
 
+/**
+ * Cut/Copy/Paste/Select All for every focus target. PredefinedMenuItem
+ * equivalents are no-ops on Linux and menu events carry no user activation,
+ * so the webview's native execCommand clipboard path can't be used — the OS
+ * clipboard goes through the Rust bridge instead, and the editor is driven
+ * through Muya's own copy/cut/paste handlers (editBridge).
+ */
+export function editOp(op: 'cut' | 'copy' | 'paste' | 'selectAll') {
+  const el = document.activeElement
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    // Plain-value path for fields (chat, find, source mode): programmatic
+    // value edits — no execCommand, no activation needed.
+    if (op === 'selectAll') return el.select()
+    const start = el.selectionStart ?? el.value.length
+    const end = el.selectionEnd ?? start
+    if (op === 'copy' || op === 'cut') {
+      const text = el.value.slice(start, end)
+      if (!text) return
+      void tauri.clipboardWriteText(text)
+      if (op === 'cut') {
+        el.setRangeText('', start, end, 'end')
+        el.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+    } else {
+      void tauri.clipboardReadText().then((text) => {
+        if (!text) return
+        el.setRangeText(text, start, end, 'end')
+        el.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+    }
+    return
+  }
+
+  if (op === 'selectAll') return void selectAllInEditor()
+
+  if (op === 'paste') {
+    void tauri.clipboardReadText().then((text) => {
+      if (!text) return useToast.getState().show('No text on the clipboard')
+      void insertMarkdown(text)
+    })
+    return
+  }
+
+  // Copy/cut in the editor: only when the focus/selection actually lives there
+  // (never steal from text selected in the chat panel or outline).
+  const domNode = getMuya()?.domNode
+  const inEditor =
+    !!domNode &&
+    (domNode.contains(document.activeElement) ||
+      domNode.contains(window.getSelection()?.anchorNode ?? null))
+  const selText = window.getSelection()?.toString() ?? ''
+  const text = pickCopySource(inEditor, muyaClipboardCopyCut(op), selText)
+  if (text) void tauri.clipboardWriteText(text)
+}
+
 function aiDocAction(prompt: string) {
   const md = getMarkdown()
   if (!md.trim()) return useToast.getState().show('Document is empty')
@@ -129,6 +192,10 @@ export function getCommands(): Command[] {
 
     cmd('edit.undo', 'Undo', 'Edit', () => getMuya()?.undo(), 'revert last action'),
     cmd('edit.redo', 'Redo', 'Edit', () => getMuya()?.redo(), 're-apply undone'),
+    cmd('edit.cut', 'Cut', 'Edit', () => editOp('cut'), 'clipboard'),
+    cmd('edit.copy', 'Copy', 'Edit', () => editOp('copy'), 'clipboard'),
+    cmd('edit.paste', 'Paste', 'Edit', () => editOp('paste'), 'clipboard'),
+    cmd('edit.selectAll', 'Select all', 'Edit', () => editOp('selectAll'), 'select everything'),
     cmd('edit.find', `${settings.findOpen ? '✓ ' : ''}Find / Replace`, 'Edit', () => settings.set('findOpen', !settings.findOpen)),
     cmd('edit.searchWorkspace', 'Search in workspace…', 'Edit', () => settings.set('workspaceSearchOpen', true), 'grep find across files'),
 

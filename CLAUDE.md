@@ -3,7 +3,7 @@
 Typora-style Markdown editor: Tauri 2 (Rust) + React 19 + TypeScript, editor
 engine `@muyajs/core` 0.2.0 (**pinned exact** — pre-1.0 API churn; upgrade
 deliberately). Product name **MarkDawn**, binary `markdawn`, identifier
-`app.notepad.editor`. Live at v0.1.2.
+`app.notepad.editor`. Live at v0.2.0.
 
 Historical planning docs, not current state: `PLAN.md` (original build plan),
 `AUDIT.md` (2026-09-14 audit; most blockers were fixed after it — CSP, asset

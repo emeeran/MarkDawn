@@ -1,0 +1,296 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "MarkDawn Architecture",
+    "output": "docs/markdawn-architecture.html",
+    "viewBox": [
+      955,
+      500
+    ],
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "save-path",
+        "label": "Save path",
+        "focus": [
+          "webview",
+          "fsguard",
+          "workspace"
+        ],
+        "note": "Debounced atomic writes, every fs op guarded"
+      },
+      {
+        "id": "ai-path",
+        "label": "AI path",
+        "focus": [
+          "webview",
+          "aiproxy",
+          "secrets",
+          "keychain",
+          "providers"
+        ],
+        "note": "Keys never reach the webview; streams proxy through Rust"
+      },
+      {
+        "id": "read-aloud",
+        "label": "Read aloud",
+        "focus": [
+          "webview",
+          "tts",
+          "edgetts"
+        ],
+        "note": "Synth and playback run as separate killable slots"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "keychain",
+      "type": "security",
+      "label": "OS Keychain",
+      "sublabel": "secret-service",
+      "pos": [
+        40,
+        36
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "secrets",
+      "type": "security",
+      "label": "Secrets",
+      "sublabel": "secrets.rs",
+      "pos": [
+        460,
+        36
+      ],
+      "size": [
+        175,
+        64
+      ]
+    },
+    {
+      "id": "aiproxy",
+      "type": "backend",
+      "label": "AI Proxy",
+      "sublabel": "ai_proxy.rs",
+      "pos": [
+        460,
+        128
+      ],
+      "size": [
+        175,
+        64
+      ]
+    },
+    {
+      "id": "providers",
+      "type": "cloud",
+      "label": "AI Providers",
+      "sublabel": "Anthropic, OpenAI, Groq, Ollama",
+      "pos": [
+        760,
+        124
+      ],
+      "size": [
+        155,
+        74
+      ]
+    },
+    {
+      "id": "tts",
+      "type": "backend",
+      "label": "Read Aloud",
+      "sublabel": "tts.rs · synth/play slots",
+      "pos": [
+        460,
+        220
+      ],
+      "size": [
+        175,
+        64
+      ]
+    },
+    {
+      "id": "services",
+      "type": "backend",
+      "label": "App Services",
+      "sublabel": "menu · pick · lifecycle · export",
+      "pos": [
+        460,
+        404
+      ],
+      "size": [
+        175,
+        64
+      ]
+    },
+    {
+      "id": "edgetts",
+      "type": "external",
+      "label": "edge-tts",
+      "sublabel": "CLI → mpv / ffplay",
+      "pos": [
+        760,
+        216
+      ],
+      "size": [
+        155,
+        72
+      ]
+    },
+    {
+      "id": "webview",
+      "type": "frontend",
+      "label": "Webview UI",
+      "sublabel": "React 19 · Muya · zustand",
+      "pos": [
+        40,
+        210
+      ],
+      "size": [
+        150,
+        110
+      ]
+    },
+    {
+      "id": "fsguard",
+      "type": "security",
+      "label": "FsGuard",
+      "sublabel": "fs.rs · atomic writes · watcher",
+      "pos": [
+        460,
+        312
+      ],
+      "size": [
+        175,
+        64
+      ]
+    },
+    {
+      "id": "workspace",
+      "type": "database",
+      "label": "Workspace Files",
+      "sublabel": "markdown + _assets",
+      "pos": [
+        760,
+        312
+      ],
+      "size": [
+        155,
+        72
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Webview process — src/",
+      "wraps": [
+        "webview"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "Tauri Core (Rust) — src-tauri/src",
+      "wraps": [
+        "secrets",
+        "aiproxy",
+        "services",
+        "tts",
+        "fsguard"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "webview-ai",
+      "from": "webview",
+      "to": "aiproxy",
+      "label": "ai_stream via IPC only",
+      "variant": "emphasis",
+      "labelSegment": 2
+    },
+    {
+      "id": "webview-fs",
+      "from": "webview",
+      "to": "fsguard",
+      "label": "read / write via IPC",
+      "variant": "emphasis",
+      "labelSegment": 2
+    },
+    {
+      "id": "webview-tts",
+      "from": "webview",
+      "to": "tts",
+      "label": "tts_synth · tts_play",
+      "labelSegment": 2,
+      "labelDy": 12
+    },
+    {
+      "id": "webview-services",
+      "from": "webview",
+      "to": "services",
+      "label": "menu-action · pickers",
+      "labelSegment": 2
+    },
+    {
+      "id": "ai-stream",
+      "from": "aiproxy",
+      "to": "providers",
+      "label": "SSE / NDJSON",
+      "variant": "emphasis"
+    },
+    {
+      "id": "ai-key",
+      "from": "aiproxy",
+      "to": "secrets",
+      "label": "read_key",
+      "variant": "security"
+    },
+    {
+      "id": "keychain-access",
+      "from": "secrets",
+      "to": "keychain",
+      "label": "set / delete / status",
+      "variant": "security"
+    },
+    {
+      "id": "guarded-writes",
+      "from": "fsguard",
+      "to": "workspace",
+      "label": "atomic temp+rename",
+      "variant": "emphasis"
+    },
+    {
+      "id": "tts-spawn",
+      "from": "tts",
+      "to": "edgetts",
+      "label": "spawn · kill_on_drop"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Data Flow & Native Services",
+      "items": [
+        "Muya json-change → getMarkdown → zustand → debounced write_file",
+        "Saves are atomic temp+rename and flush on quit",
+        "Menu ids dispatch through the command registry; export shells to pandoc"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Security Invariants",
+      "items": [
+        "Keys live in the OS keychain — settings.json holds only isConfigured",
+        "FsGuard confines every fs op to consented roots",
+        "AI HTTP never runs in the webview — it proxies through Rust"
+      ]
+    }
+  ]
+}

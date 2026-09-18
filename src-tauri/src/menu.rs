@@ -86,10 +86,13 @@ fn edit_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
         &item(app, "edit.undo", "Undo", Some("CmdOrCtrl+Z"))?,
         &item(app, "edit.redo", "Redo", Some("Shift+CmdOrCtrl+Z"))?,
         &sep(app)?,
-        &PredefinedMenuItem::cut(app, None)?,
-        &PredefinedMenuItem::copy(app, None)?,
-        &PredefinedMenuItem::paste(app, None)?,
-        &PredefinedMenuItem::select_all(app, None)?,
+        // Real items, not PredefinedMenuItem::cut/copy/paste/select_all — those
+        // are no-ops on Linux (same reason as undo/redo above). Handled in the
+        // command registry via the Rust clipboard bridge.
+        &item(app, "edit.cut", "Cut", None)?,
+        &item(app, "edit.copy", "Copy", None)?,
+        &item(app, "edit.paste", "Paste", None)?,
+        &item(app, "edit.selectAll", "Select All", None)?,
         &sep(app)?,
         &item(app, "edit.find", "Find / Replace…", Some("CmdOrCtrl+F"))?,
         &item(app, "edit.searchWorkspace", "Search in Workspace…", Some("Alt+CmdOrCtrl+F"))?,

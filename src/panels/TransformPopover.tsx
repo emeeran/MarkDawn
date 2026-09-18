@@ -61,12 +61,17 @@ export function DiffPopover({
   const [busy, setBusy] = useState(true)
   const [result, setResult] = useState('')
   const [error, setError] = useState<string | null>(null)
+  // Bumped by Retry to re-run the stream through the same effect.
+  const [attempt, setAttempt] = useState(0)
   const original = useRef(getSelection().text.trim()).current
   const cancelRef = useRef<{ cancel: () => void } | null>(null)
   const cancelled = useRef(false)
   const errored = useRef(false)
 
   useEffect(() => {
+    setResult('')
+    setError(null)
+    errored.current = false
     cancelRef.current = stream(
       [{ role: 'user', content: buildTransformPrompt(request.action, original, request.extra) }],
       BASE_SYSTEM,
@@ -84,12 +89,27 @@ export function DiffPopover({
     return () => cancelRef.current?.cancel()
     // Primitive deps: an object dep re-fired this stream on every App render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [request.action, request.extra, original])
+  }, [request.action, request.extra, original, attempt])
 
   function doCancel() {
     cancelled.current = true
     cancelRef.current?.cancel()
     setBusy(false) // an aborted Rust task sends neither Done nor Error
+  }
+
+  function retry() {
+    cancelled.current = false
+    setBusy(true)
+    setAttempt((n) => n + 1)
+  }
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(result.trim())
+      useToast.getState().show('Copied to clipboard')
+    } catch {
+      useToast.getState().show('Could not copy')
+    }
   }
 
   async function apply() {
@@ -124,6 +144,8 @@ export function DiffPopover({
       </div>
       <div className="diff-footer">
         <button onClick={onClose}>Discard</button>
+        {!busy && !!result && <button onClick={() => void copy()}>Copy</button>}
+        {!busy && <button onClick={retry}>Retry</button>}
         {!busy && !error && (
           <button className="primary" onClick={() => void apply()}>Apply</button>
         )}

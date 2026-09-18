@@ -90,25 +90,42 @@ pub fn tts_stop(state: State<'_, TtsState>) {
     stop_internal(&state);
 }
 
-/// Synthesize `text` with edge-tts, then play the audio with the first
-/// available player. Channel-delivered (async responses don't resolve on this
-/// WebKitGTK build). Resolves once playback starts (or on error).
+/// Synthesize `text` with edge-tts into a temp mp3; resolves with its path.
+/// The frontend prefetches the next sentence's synth while the current one
+/// plays, so only this command touches the synth slot. Channel-delivered
+/// (async responses don't resolve on this WebKitGTK build).
 /// `rate`/`volume` are like "+10%"/"-5%", `pitch` like "+20Hz"/"-10Hz".
 #[tauri::command]
-pub fn tts_speak(
+pub fn tts_synth(
     app: AppHandle,
     text: String,
     voice: Option<String>,
     rate: Option<String>,
     pitch: Option<String>,
     volume: Option<String>,
-    on_result: Channel<Cmd<bool>>,
+    on_result: Channel<Cmd<String>>,
 ) {
     tauri::async_runtime::spawn(async move {
         let state = app.state::<TtsState>();
-        let out = match speak_inner(&text, voice, rate, pitch, volume, &state).await {
-            Ok(()) => Cmd { ok: true, value: true, error: None },
-            Err(e) => Cmd { ok: false, value: false, error: Some(e) },
+        let out = match synth_inner(&text, voice, rate, pitch, volume, &state).await {
+            Ok(path) => Cmd { ok: true, value: path.to_string_lossy().into_owned(), error: None },
+            Err(e) => Cmd { ok: false, value: String::new(), error: Some(e) },
+        };
+        let _ = on_result.send(out);
+    });
+}
+
+/// Play a previously synthesized mp3. Resolves when playback FINISHES (or
+/// "stopped" on tts_stop) with the player used, so the frontend can pace
+/// sentence-by-sentence highlighting. "xdg-open" exits immediately and
+/// cannot be paced.
+#[tauri::command]
+pub fn tts_play(app: AppHandle, mp3: String, on_result: Channel<Cmd<String>>) {
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<TtsState>();
+        let out = match play_inner(std::path::Path::new(&mp3), &state).await {
+            Ok(player) => Cmd { ok: true, value: player, error: None },
+            Err(e) => Cmd { ok: false, value: String::new(), error: Some(e) },
         };
         let _ = on_result.send(out);
     });
@@ -122,21 +139,32 @@ fn valid_tts_param(s: &str, suffix: &str) -> bool {
     !num.is_empty() && num.chars().all(|c| c.is_ascii_digit())
 }
 
-async fn speak_inner(
+/// Only files this app synthesized are playable — the path arrives over IPC.
+fn is_app_synth(mp3: &std::path::Path) -> bool {
+    mp3.parent().is_some_and(|d| d == std::env::temp_dir())
+        && mp3
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().starts_with("notepad-tts-"))
+}
+
+async fn synth_inner(
     text: &str,
     voice: Option<String>,
     rate: Option<String>,
     pitch: Option<String>,
     volume: Option<String>,
     state: &TtsState,
-) -> Result<(), String> {
+) -> Result<std::path::PathBuf, String> {
     let text = text.trim().to_string();
     if text.is_empty() {
         return Err("nothing to read".into());
     }
     // ponytail: hard cap — edge-tts degrades on very long single requests.
     let text = text.chars().take(30_000).collect::<String>();
-    stop_internal(state);
+    // Kill a stale synth only — a prefetch must not cut off live playback.
+    if let Ok(mut s) = state.synth.lock() {
+        kill_locked(&mut s);
+    }
     cleanup_old_temp_files();
 
     let stamp = std::time::SystemTime::now()
@@ -218,29 +246,71 @@ async fn speak_inner(
         tokio::time::sleep(Duration::from_millis(120)).await;
     }
 
+    Ok(mp3)
+}
+
+async fn play_inner(mp3: &std::path::Path, state: &TtsState) -> Result<String, String> {
+    if !is_app_synth(mp3) || !mp3.is_file() {
+        return Err("not a synthesized audio file".into());
+    }
     // Pick a player: mpv → ffplay → xdg-open (default media app).
     let play = |prog: &str, args: &[&str]| -> Option<Child> {
         tokio::process::Command::new(prog)
             .args(args)
-            .arg(&mp3)
+            .arg(mp3)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .kill_on_drop(true)
             .spawn()
             .ok()
     };
+    // A fresh play replaces any current one.
+    if let Ok(mut p) = state.player.lock() {
+        kill_locked(&mut p);
+    }
     let player = play("mpv", &["--no-video", "--really-quiet"])
-        .or_else(|| play("ffplay", ["-nodisp", "-autoexit", "-loglevel", "quiet"].as_slice()))
-        .or_else(|| play("xdg-open", &[]));
+        .map(|c| (c, "mpv"))
+        .or_else(|| {
+            play("ffplay", ["-nodisp", "-autoexit", "-loglevel", "quiet"].as_slice())
+                .map(|c| (c, "ffplay"))
+        })
+        .or_else(|| play("xdg-open", &[]).map(|c| (c, "xdg-open")));
     match player {
-        Some(child) => {
+        Some((child, name)) => {
             *state.player.lock().map_err(|e| e.to_string())? = Some(child);
-            // ponytail: the mp3 outlives playback (the player may still read
-            // it); the janitor removes stale files after an hour.
-            Ok(())
+            if name == "xdg-open" {
+                // ponytail: the mp3 outlives playback here — xdg-open hands
+                // the file to the desktop and exits, so deletion would race
+                // the real player; the janitor sweeps it after an hour.
+                return Ok(name.into()); // hands off and exits — nothing to wait for
+            }
+            // Wait for playback to end so the caller can pace sentence
+            // highlighting. tts_stop empties the slot, which ends this wait.
+            loop {
+                {
+                    let mut p = state.player.lock().map_err(|e| e.to_string())?;
+                    match p.as_mut() {
+                        None => return Err("stopped".into()),
+                        Some(c) => match c.try_wait() {
+                            Ok(Some(_)) => {
+                                *p = None;
+                                let _ = std::fs::remove_file(mp3);
+                                return Ok(name.into());
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                *p = None;
+                                let _ = std::fs::remove_file(mp3);
+                                return Err(e.to_string());
+                            }
+                        },
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(150)).await;
+            }
         }
         None => {
-            let _ = std::fs::remove_file(&mp3);
+            let _ = std::fs::remove_file(mp3);
             Err("no audio player found (install mpv or ffplay)".into())
         }
     }
@@ -268,7 +338,7 @@ fn cleanup_old_temp_files() {
 
 #[cfg(test)]
 mod tests {
-    use super::valid_tts_param;
+    use super::{is_app_synth, valid_tts_param};
 
     #[test]
     fn tts_param_validation() {
@@ -281,5 +351,15 @@ mod tests {
         assert!(!valid_tts_param("10", "%"));
         assert!(!valid_tts_param("", "%"));
         assert!(!valid_tts_param("abc%", "%"));
+    }
+
+    #[test]
+    fn tts_play_guard_only_accepts_app_synth_files() {
+        let dir = std::env::temp_dir();
+        assert!(is_app_synth(&dir.join("notepad-tts-123-456.mp3")));
+        // Wrong location or wrong name: rejected.
+        assert!(!is_app_synth(std::path::Path::new("/etc/notepad-tts-123-456.mp3")));
+        assert!(!is_app_synth(&dir.join("passwd")));
+        assert!(!is_app_synth(&dir.join("notepad-tts-evil/../../.bashrc")));
     }
 }

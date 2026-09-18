@@ -7,9 +7,10 @@ import type { ITocItem } from '@muyajs/core'
 import markDawnLogo from './assets/markdawn-logo.png'
 import { captureRange, readDomSelection, setSelection } from './ai/selection'
 import { runSelectionTransform } from './ai/transform'
+import { isReading } from './ai/tts'
 import { FORMAT_ACTIONS, PARAGRAPH_ACTIONS } from './editor/inserts'
 import { MuyaEditor } from './editor/MuyaEditor'
-import { getCommands } from './commands/registry'
+import { editOp, getCommands } from './commands/registry'
 import { pickFolder, pickFile, tauri } from './lib/tauri'
 import { ChatPanel } from './panels/ChatPanel'
 import { CommandPalette } from './panels/CommandPalette'
@@ -235,6 +236,11 @@ export function App() {
   }
 
   function onSelection(sel: SelectionInfo) {
+    // Read-aloud highlights via the live selection; don't pop the AI bar mid-read.
+    if (isReading()) {
+      setSelStable(false)
+      return
+    }
     setSelUi({ text: sel.text, rect: sel.rect })
     clearTimeout(selStableTimer.current)
     if (sel.text) {
@@ -332,6 +338,9 @@ export function App() {
           )}
           {ctxMenu && (
             <div className="transform-popover" style={{ top: ctxMenu.y, left: Math.min(ctxMenu.x, window.innerWidth - 130) }}>
+              <button onClick={() => { setCtxMenu(null); editOp('cut') }}>Cut</button>
+              <button onClick={() => { setCtxMenu(null); editOp('copy') }}>Copy</button>
+              <button onClick={() => { setCtxMenu(null); editOp('paste') }}>Paste</button>
               <button onClick={() => {
                 setCtxMenu(null)
                 runSelectionTransform('humanize')
