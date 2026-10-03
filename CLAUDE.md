@@ -43,7 +43,7 @@ src/
              muyaSetup.ts (plugins/image tools), ghostText.ts, inserts.ts,
              imageMap.ts (path→data-URL render map)
   ai/        client.ts (streaming channel), context.ts (doc budget),
-             prompts.ts (system prompt + quick actions), diff.ts (word LCS),
+             prompts.ts (system prompt + AI_FEATURES registry + quick actions), diff.ts (word LCS),
              transform.ts, selection.ts, tts.ts
   panels/    FileTree, Outline, TabsBar, ChatPanel, FindBar, WorkspaceSearch,
              CommandPalette, TransformPopover, SettingsDialog, WordCount
@@ -64,7 +64,8 @@ src-tauri/src/
   tts.rs      edge-tts synth + player chain mpv→ffplay→xdg-open, kill_on_drop,
               /tmp janitor, argv-injection validation
   menu.rs     native menu; every item emits one `menu-action` id — ids are the
-              contract with commands/registry.ts
+              contract with commands/registry.ts; the AI menu mirrors
+              AI_FEATURES and is static — per-feature toggles gate in JS
   pick.rs     zenity → kdialog → dialog-plugin fallback (rfd hangs on some Linux)
   lifecycle.rs quit interception: emits quit-requested, waits for flushAll,
               3 s force-exit watchdog; startup + single-instance file args

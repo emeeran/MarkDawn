@@ -3,8 +3,9 @@ import { stream } from '../ai/client'
 import { wordDiff } from '../ai/diff'
 import { getSelection } from '../ai/selection'
 
-import { BASE_SYSTEM, buildTransformPrompt, QUICK_ACTIONS } from '../ai/prompts'
+import { BASE_SYSTEM, buildTransformPrompt, featureEnabled, QUICK_ACTIONS } from '../ai/prompts'
 import { replaceSelection } from '../editor/editBridge'
+import { useSettings } from '../stores/settings'
 import { useToast } from '../stores/toast'
 
 type Rect = { top: number; left: number; bottom: number; right: number } | null
@@ -13,6 +14,8 @@ type Rect = { top: number; left: number; bottom: number; right: number } | null
 export function SelectionActionBar({ rect, onAction }: { rect: Rect; onAction: (action: string, extra?: string) => void }) {
   const [customMode, setCustomMode] = useState(false)
   const [prompt, setPrompt] = useState('')
+  const aiFeatures = useSettings((s) => s.aiFeatures)
+  const actions = QUICK_ACTIONS.filter((a) => featureEnabled(aiFeatures, a.id))
 
   return (
     <div className="transform-popover" style={popStyle(rect)}>
@@ -29,7 +32,7 @@ export function SelectionActionBar({ rect, onAction }: { rect: Rect; onAction: (
           }}
         />
       ) : (
-        QUICK_ACTIONS.map((a) => (
+        actions.map((a) => (
           <button
             key={a.id}
             onClick={() =>

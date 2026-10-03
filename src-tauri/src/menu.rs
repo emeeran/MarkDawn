@@ -9,12 +9,13 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     let edit = edit_menu(app)?;
     let paragraph = paragraph_menu(app)?;
     let format = format_menu(app)?;
+    let ai = ai_menu(app)?;
     let view = view_menu(app)?;
     let themes = themes_menu(app)?;
     let help = help_menu(app)?;
 
     let menu = MenuBuilder::new(app)
-        .items(&[&file, &edit, &paragraph, &format, &view, &themes, &help])
+        .items(&[&file, &edit, &paragraph, &format, &ai, &view, &themes, &help])
         .build()?;
 
     if let Some(window) = app.get_webview_window("main") {
@@ -150,6 +151,36 @@ fn format_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
     Ok(m)
 }
 
+/// AI features. Ids mirror the command registry (`ai.<feature>` from
+/// AI_FEATURES in src/ai/prompts.ts) — dispatch falls through to it. The menu
+/// is static; per-feature enable/disable is enforced JS-side (toast on a
+/// disabled item, hidden in palette/selection bar).
+fn ai_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
+    let m = Submenu::new(app, "AI", true)?;
+    m.append_items(&[
+        &item(app, "ai.humanize", "Humanize Selection", None)?,
+        &item(app, "ai.improve", "Improve Writing", None)?,
+        &item(app, "ai.grammar", "Fix Grammar", None)?,
+        &item(app, "ai.shorter", "Shorten Selection", None)?,
+        &item(app, "ai.longer", "Expand Selection", None)?,
+        &item(app, "ai.bullets", "Selection as Bullet List", None)?,
+        &item(app, "ai.summarize", "Summarize Selection", None)?,
+        &item(app, "ai.translate", "Translate Selection…", None)?,
+        &item(app, "ai.custom", "Custom Prompt…", None)?,
+        &sep(app)?,
+        &item(app, "ai.tone", "Tone Report", None)?,
+        &item(app, "ai.docSummary", "Summarize Document", None)?,
+        &item(app, "ai.actionItems", "Extract Action Items", None)?,
+        &sep(app)?,
+        &item(app, "ai.continue", "Continue Writing", None)?,
+        &item(app, "ai.draft", "Draft from Prompt…", None)?,
+        &sep(app)?,
+        &item(app, "view.ai", "AI Panel", Some("CmdOrCtrl+Shift+A"))?,
+        &item(app, "ai.chatClear", "Clear AI Conversation", None)?,
+    ])?;
+    Ok(m)
+}
+
 fn view_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
     let m = Submenu::new(app, "View", true)?;
     m.append_items(&[
@@ -165,8 +196,6 @@ fn view_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
         &sep(app)?,
         &item(app, "view.sidebar", "File Tree", Some("CmdOrCtrl+Shift+L"))?,
         &item(app, "view.outline", "Outline", Some("Alt+CmdOrCtrl+O"))?,
-        &item(app, "view.ai", "AI Panel", Some("CmdOrCtrl+Shift+A"))?,
-        &item(app, "ai.chatClear", "Clear AI Conversation", None)?,
         &sep(app)?,
         &item(app, "view.palette", "Command Palette…", Some("CmdOrCtrl+K"))?,
         &item(app, "view.quickopen", "Quick Open…", Some("CmdOrCtrl+P"))?,

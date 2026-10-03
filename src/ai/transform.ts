@@ -1,4 +1,6 @@
 import { captureRange, getSelection } from './selection'
+import { featureEnabled, AI_FEATURES } from './prompts'
+import { useSettings } from '../stores/settings'
 import { useToast } from '../stores/toast'
 
 /**
@@ -9,6 +11,11 @@ import { useToast } from '../stores/toast'
  * selection — so Apply can re-target the exact original span.
  */
 export function runSelectionTransform(action: string, extra?: string): boolean {
+  if (!featureEnabled(useSettings.getState().aiFeatures, action)) {
+    const label = AI_FEATURES.find((f) => f.id === action)?.label ?? action
+    useToast.getState().show(`"${label}" is off — enable it in Settings → AI features`)
+    return false
+  }
   const sel = getSelection()
   if (!sel.text.trim()) {
     useToast.getState().show('Select some text first')

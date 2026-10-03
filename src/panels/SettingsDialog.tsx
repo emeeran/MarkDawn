@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { AI_FEATURES, featureEnabled } from '../ai/prompts'
 import { tauri } from '../lib/tauri'
 import { useSettings } from '../stores/settings'
 import { useToast } from '../stores/toast'
@@ -221,6 +222,29 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               Test voice
             </button>
           </div>
+        </div>
+
+        <h3>AI features</h3>
+        <div className="settings-col">
+          {AI_FEATURES.map((f) => {
+            const on = featureEnabled(settings.aiFeatures, f.id)
+            return (
+              <div className="settings-row" key={f.id}>
+                <label>{f.label}</label>
+                <div className="seg-group" role="group" aria-label={f.label}>
+                  <button className={on ? 'on' : ''} onClick={() => settings.set('aiFeatures', { ...settings.aiFeatures, [f.id]: true })}>
+                    On
+                  </button>
+                  <button className={!on ? 'on' : ''} onClick={() => settings.set('aiFeatures', { ...settings.aiFeatures, [f.id]: false })}>
+                    Off
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+          <small>
+            Off features vanish from the selection bar and command palette; native menu items show a notice instead.
+          </small>
         </div>
 
         <h3>AI</h3>

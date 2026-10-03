@@ -144,6 +144,7 @@ export function ChatPanel() {
         </select>
         {notepad && <span className="chat-chip" title={notepad}>NOTEPAD.md</span>}
         <textarea
+          id="chat-input"
           rows={2}
           placeholder="Ask… (Enter to send, ⇧Enter for newline)"
           value={input}

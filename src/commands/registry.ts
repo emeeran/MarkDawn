@@ -1,4 +1,6 @@
 import { renderToStaticHTML } from '@muyajs/core'
+import { AI_FEATURES, featureEnabled, REPORT_PROMPTS } from '../ai/prompts'
+import { getSelection } from '../ai/selection'
 import { readAloud, stopReading } from '../ai/tts'
 import { runSelectionTransform } from '../ai/transform'
 import {
@@ -156,13 +158,19 @@ export function editOp(op: 'cut' | 'copy' | 'paste' | 'selectAll') {
   if (text) void tauri.clipboardWriteText(text)
 }
 
-function aiDocAction(prompt: string) {
-  const md = getMarkdown()
-  if (!md.trim()) return useToast.getState().show('Document is empty')
+/** Stream a report feature into the AI panel. Tone uses the selection when there is one. */
+function aiReport(id: string) {
+  const sel = id === 'tone' ? getSelection().text : ''
+  const text = sel.trim() || getMarkdown()
+  if (!text.trim()) return useToast.getState().show('Nothing to analyze — document is empty')
   useSettings.getState().set('aiPanelOpen', true)
-  useChat.getState().send('', [
-    { role: 'user', content: `${prompt}\n\n<document>\n${md}\n</document>` },
-  ])
+  useChat.getState().send('', [{ role: 'user', content: REPORT_PROMPTS[id](text) }])
+}
+
+/** Draft: open the AI panel with the composer focused; the chat does the generating. */
+function draftFromPrompt() {
+  useSettings.getState().set('aiPanelOpen', true)
+  requestAnimationFrame(() => document.getElementById('chat-input')?.focus())
 }
 
 function continueWriting() {
@@ -224,12 +232,14 @@ export function getCommands(): Command[] {
     cmd('export.rtf', 'Export → RTF (pandoc)', 'Export', () => void exportPandoc('rtf')),
     cmd('export.epub', 'Export → EPUB (pandoc)', 'Export', () => void exportPandoc('epub')),
 
-    cmd('ai.humanize', 'AI → Humanize selection', 'AI', () => void runSelectionTransform('humanize'), 'natural human rewrite'),
-    cmd('ai.improve', 'AI → Improve selection', 'AI', () => void runSelectionTransform('improve'), 'transform rewrite'),
-    cmd('ai.grammar', 'AI → Fix grammar in selection', 'AI', () => void runSelectionTransform('grammar')),
-    cmd('ai.continue', 'AI → Continue writing', 'AI', continueWriting),
-    cmd('ai.summarize', 'AI → Summarize document', 'AI', () => aiDocAction('Summarize this document as a concise Markdown outline.')),
-    cmd('ai.actions', 'AI → Extract action items', 'AI', () => aiDocAction('Extract a Markdown checklist of action items from this document.')),
+    // One palette/menu command per enabled AI feature (registry in ai/prompts.ts).
+    ...AI_FEATURES.filter((f) => featureEnabled(settings.aiFeatures, f.id)).flatMap((f): Command[] => {
+      const entry = (run: () => void): Command => cmd(`ai.${f.id}`, `AI → ${f.menu}`, 'AI', run, f.keywords)
+      if (f.id === 'continue') return [entry(continueWriting)]
+      if (f.id === 'draft') return [entry(draftFromPrompt)]
+      if (f.id in REPORT_PROMPTS) return [entry(() => aiReport(f.id))]
+      return [entry(() => void runSelectionTransform(f.id))]
+    }),
     cmd('ai.chatClear', 'AI → Clear conversation', 'AI', () => {
       useChat.getState().clear()
       useToast.getState().show('AI conversation cleared')

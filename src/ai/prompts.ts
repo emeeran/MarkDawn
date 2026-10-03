@@ -127,17 +127,59 @@ ${s}`,
   summarize: (s) => `Summarize this text:\n\n${s}`,
 }
 
-export const QUICK_ACTIONS: { id: keyof typeof TRANSFORM_PROMPTS | 'translate' | 'custom'; label: string }[] = [
-  { id: 'humanize', label: 'Humanize' },
-  { id: 'improve', label: 'Improve writing' },
-  { id: 'grammar', label: 'Fix grammar' },
-  { id: 'shorter', label: 'Make shorter' },
-  { id: 'longer', label: 'Make longer' },
-  { id: 'bullets', label: 'Bullet list' },
-  { id: 'summarize', label: 'Summarize' },
-  { id: 'translate', label: 'Translate…' },
-  { id: 'custom', label: 'Custom prompt…' },
+/** Report-style actions: output streams into the AI panel instead of the diff card. */
+export const REPORT_PROMPTS: Record<string, (text: string) => string> = {
+  tone: (s) => `Analyze the tone of this text. Describe the overall tone in a sentence or two, point out passages where the tone shifts or feels inconsistent (quote them briefly), and close with concrete suggestions. Use Markdown.\n\n<text>\n${s}\n</text>`,
+  docSummary: (s) => `Summarize this document as a concise Markdown outline.\n\n<document>\n${s}\n</document>`,
+  actionItems: (s) => `Extract a Markdown checklist of action items from this document.\n\n<document>\n${s}\n</document>`,
+}
+
+/**
+ * Single source of truth for every AI feature: the selection action bar,
+ * palette/menu commands, the native AI menu and the Settings toggles all
+ * derive from this list. `def` is the enabled-by-default flag; settings may
+ * override per feature (`aiFeatures[id] === false` disables).
+ */
+export interface AiFeature {
+  id: string
+  /** Selection action bar label. */
+  label: string
+  /** Native menu / palette label (without the "AI → " prefix). */
+  menu: string
+  /** Show in the selection action bar (selection transforms only). */
+  bar?: boolean
+  /** Needs a text input before running (translate / custom / draft). */
+  input?: boolean
+  keywords?: string
+  def: boolean
+}
+
+export const AI_FEATURES: AiFeature[] = [
+  { id: 'humanize', label: 'Humanize', menu: 'Humanize Selection', bar: true, def: true, keywords: 'natural human rewrite' },
+  { id: 'improve', label: 'Improve writing', menu: 'Improve Writing', bar: true, def: true, keywords: 'transform rewrite' },
+  { id: 'grammar', label: 'Fix grammar', menu: 'Fix Grammar', bar: true, def: true, keywords: 'spelling punctuation' },
+  { id: 'shorter', label: 'Make shorter', menu: 'Shorten Selection', bar: true, def: true },
+  { id: 'longer', label: 'Make longer', menu: 'Expand Selection', bar: true, def: true },
+  { id: 'bullets', label: 'Bullet list', menu: 'Selection as Bullet List', bar: true, def: true },
+  { id: 'summarize', label: 'Summarize', menu: 'Summarize Selection', bar: true, def: true },
+  { id: 'translate', label: 'Translate…', menu: 'Translate Selection…', bar: true, input: true, def: true },
+  { id: 'custom', label: 'Custom prompt…', menu: 'Custom Prompt…', bar: true, input: true, def: true },
+  { id: 'tone', label: 'Check tone', menu: 'Tone Report', def: true, keywords: 'review style' },
+  { id: 'docSummary', label: 'Summarize document', menu: 'Summarize Document', def: true, keywords: 'outline tldr' },
+  { id: 'actionItems', label: 'Extract action items', menu: 'Extract Action Items', def: true, keywords: 'tasks todo checklist' },
+  { id: 'continue', label: 'Continue writing', menu: 'Continue Writing', def: true, keywords: 'write more' },
+  { id: 'draft', label: 'Draft from prompt…', menu: 'Draft from Prompt…', input: true, def: true, keywords: 'generate write new' },
 ]
+
+/** Selection action bar entries (order = AI_FEATURES order). */
+export const QUICK_ACTIONS: { id: string; label: string }[] = AI_FEATURES.filter((f) => f.bar).map(
+  ({ id, label }) => ({ id, label }),
+)
+
+/** Absent key = enabled; an explicit `false` disables. */
+export function featureEnabled(enabled: Record<string, boolean>, id: string): boolean {
+  return enabled[id] !== false
+}
 
 export function buildTransformPrompt(action: string, selection: string, extra?: string): string {
   if (action === 'translate') {

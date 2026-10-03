@@ -65,6 +65,8 @@ export interface Settings {
   provider: ProviderId
   models: Record<ProviderId, string>
   ollamaUrl: string
+  // Per-AI-feature toggles (keyed by AiFeature id). Absent = enabled.
+  aiFeatures: Record<string, boolean>
   // Ephemeral UI state — persisted (harmless) but never shown as preferences.
   findOpen: boolean
   findQuery: string
@@ -99,6 +101,7 @@ export const DEFAULT_SETTINGS: Settings = {
     ollama: 'llama3.2',
   },
   ollamaUrl: 'http://localhost:11434',
+  aiFeatures: {},
   findOpen: false,
   findQuery: '',
   palette: null,

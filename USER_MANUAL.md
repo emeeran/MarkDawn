@@ -246,15 +246,33 @@ its server URL is restricted to loopback/private hosts.
 - Streams token-by-token; Stop cancels. Transcripts persist across restarts;
   each reply has *Insert at cursor*, *Replace selection*, and *Copy*.
 
-### Quick actions (select text → floating bar)
+### Quick actions (select text → floating bar, or the AI menu)
 
-*Improve writing · Fix grammar · Make shorter · Make longer · Bullet points ·
-Summarize · Translate… · Custom prompt…*
+*Humanize · Improve writing · Fix grammar · Make shorter · Make longer ·
+Bullet points · Summarize · Translate… · Custom prompt…*
 
 The rewrite streams into a **word-diff popover** (changes highlighted) with
 Apply / Discard / Stop. Applying goes through the editor's edit-bridge, so it
 lands as a normal undoable edit. If you changed the selection while the model
 was running, Apply is refused (it would corrupt the wrong span).
+
+### Reports, drafting, and the AI menu
+
+Every AI feature also lives in the top-level **AI menu** (and the command
+palette):
+
+- **Tone Report** — analyzes the selection if you have one, else the whole
+  document, and streams the analysis into the chat sidebar.
+- **Summarize Document** / **Extract Action Items** — whole-document reports
+  in the chat sidebar.
+- **Continue Writing** — continues the document from where it ends.
+- **Draft from Prompt…** — opens the chat sidebar with the composer focused;
+  describe what you want and use *Insert at cursor* / *Replace selection* on
+  the result.
+
+Each feature can be turned off in **Settings ▸ AI features**. Disabled
+features disappear from the selection bar and command palette; their native
+menu items show a notice instead.
 
 ### Ghost text
 
@@ -309,7 +327,7 @@ error instead ("already exists — remove or rename it first").
 | --- | --- |
 | Appearance | theme (auto/github/night/newsprint/pixyll), editor font family, font size, line height, paragraph alignment |
 | Editor | ghost text autocomplete on/off |
-| AI | provider, API key (keychain), model (fetched from provider), Ollama server URL, chat context mode |
+| AI | provider, API key (keychain), model (fetched from provider), Ollama server URL, chat context mode, per-feature on/off toggles |
 | Read aloud | voice, rate, pitch, volume |
 
 ---
