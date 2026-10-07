@@ -11,10 +11,11 @@
     "deb": "tauri build --bundles deb && scripts/fix-deb-desktop.sh",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "postinstall": "node scripts/trim-muya.mjs"
   },
   "dependencies": {
-    "@muyajs/core": "0.2.0",
+    "@muyajs/core": "^0.2.0",
     "@tauri-apps/api": "^2.9.0",
     "@tauri-apps/plugin-dialog": "^2.7.3",
     "@tauri-apps/plugin-opener": "^2.5.5",
