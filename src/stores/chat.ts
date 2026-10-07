@@ -4,6 +4,10 @@ import { tauri } from '../lib/tauri'
 import type { ChatMessage } from '../types'
 
 const STORE = 'chat-history'
+// History is capped in memory AND on disk: each doc-mode message embeds up to
+// ~12k chars of document snapshot, so an uncapped transcript grew the store
+// file (and every restart's load) without limit.
+const CHAT_MAX = 100
 
 interface ChatStore {
   messages: ChatMessage[]
@@ -16,7 +20,7 @@ interface ChatStore {
 
 /** Persist after every terminal state so history survives restarts. */
 function persist(messages: ChatMessage[]) {
-  void tauri.storeSet(STORE, { messages }).catch(() => {})
+  void tauri.storeSet(STORE, { messages }).catch((e) => console.warn('chat history not saved:', e))
 }
 
 export const useChat = create<ChatStore>((setState, get) => ({
@@ -38,7 +42,7 @@ export const useChat = create<ChatStore>((setState, get) => ({
             ((m as ChatMessage).role === 'user' || (m as ChatMessage).role === 'assistant') &&
             typeof (m as ChatMessage).content === 'string',
         )
-        setState({ messages })
+        setState({ messages: messages.slice(-CHAT_MAX) })
       }
     } catch {
       /* fresh install */
@@ -53,7 +57,7 @@ export const useChat = create<ChatStore>((setState, get) => ({
       .messages.filter((m) => m.content.trim())
       .slice(-10)
     setState((s) => ({
-      messages: [...s.messages, ...messages, { role: 'assistant', content: '' }],
+      messages: [...s.messages, ...messages, { role: 'assistant' as const, content: '' }].slice(-CHAT_MAX),
       streaming: true,
     }))
     const cancel = stream(

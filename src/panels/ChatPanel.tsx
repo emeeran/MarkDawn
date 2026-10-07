@@ -24,7 +24,9 @@ export function ChatPanel() {
   const bodyRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    void isProviderConfigured().then(setHasKey)
+    void isProviderConfigured()
+      .then(setHasKey)
+      .catch(() => setHasKey(false))
   }, [settings.provider])
 
   useEffect(() => {

@@ -135,7 +135,7 @@ export function App() {
     window.addEventListener('notepad:open-settings', onOpenSettings)
     window.addEventListener('notepad:clear-recents', onClearRecents)
     return () => {
-      unlisteners.forEach((u) => void u.then((f) => f()))
+      unlisteners.forEach((u) => void u.then((f) => f()).catch(() => {}))
       unClose?.()
       unDrop?.()
       window.removeEventListener('notepad:transform', onTransform)

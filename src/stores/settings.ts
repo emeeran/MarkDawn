@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { tauri } from '../lib/tauri'
 import { DEFAULT_SETTINGS, type Settings } from '../types'
+import { useToast } from './toast'
 
 /**
  * Model families that can't stream chat (classifiers, TTS, embeddings…).
@@ -47,7 +48,10 @@ export const useSettings = create<SettingsStore>((setState, get) => ({
     saveTimer = setTimeout(() => {
       const s = get()
       const { loaded: _l, ...rest } = s
-      void tauri.settingsSet(rest).catch(() => {})
+      // Silent failure here used to mean settings silently stopped persisting.
+      void tauri
+        .settingsSet(rest)
+        .catch((e) => useToast.getState().show(`Settings not saved: ${e}`))
     }, 300)
   },
 }))

@@ -96,7 +96,7 @@ export const useTabs = create<TabsStore>((setState, get) => ({
         mtime,
       }
       setState((s) => ({ tabs: [...s.tabs, tab], activeId: tab.id, banner: null }))
-      void tauri.recentPush(path)
+      void tauri.recentPush(path).catch((e) => console.warn('recent files:', e))
     } catch (e) {
       useToast.getState().show(`Cannot open ${path}: ${e}`)
     }
@@ -273,7 +273,7 @@ export const useTabs = create<TabsStore>((setState, get) => ({
       useToast.getState().show(`Save failed: ${e}`)
       return false
     }
-    void tauri.recentPush(path)
+    void tauri.recentPush(path).catch((e) => console.warn('recent files:', e))
     return true
   },
 

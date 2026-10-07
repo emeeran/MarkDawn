@@ -15,9 +15,25 @@ import { tauri } from '../lib/tauri'
 const dataUrlCache = new Map<string, Promise<string>>() // abs path → data url
 const toSource = new Map<string, string>() // data url → original src token
 
+// Both maps hold multi-MB base64 strings and used to grow for the app's
+// lifetime. 30 images is well past any real document; insertion order is
+// refreshed on every render pass, so eviction is LRU-ish. Evicting an image
+// still on screen just re-fetches it; if its toSource entry is gone too, the
+// unknown data URL saves as the base64 blob (lossless, just bulky).
+const MAX_CACHED_IMAGES = 30
+
+function trimCached<K, V>(m: Map<K, V>) {
+  while (m.size > MAX_CACHED_IMAGES) {
+    const oldest = m.keys().next().value
+    if (oldest === undefined) break
+    m.delete(oldest)
+  }
+}
+
 const MD_IMAGE_RE = /(!\[[^\]]*\]\()([^)\s]+)(\))/g
 const HTML_IMG_RE = /(<img\s[^>]*?src=")([^"]+)(")/g
-const MD_DATA_URL_RE = /!\[[^\]]*\]\(data:image\/[^;]+;base64,[A-Za-z0-9+/=]+\)/g
+// The alt group is captured so the strip round-trip keeps the author's text.
+const MD_DATA_URL_RE = /!\[([^\]]*)\]\(data:image\/[^;]+;base64,[A-Za-z0-9+/=]+\)/g
 const HTML_DATA_URL_RE = /(<img\s[^>]*?src=")(data:image\/[^;]+;base64,[A-Za-z0-9+/=]+)(")/g
 
 function isLocalPath(src: string): boolean {
@@ -39,6 +55,7 @@ function dataUrlFor(src: string, docDir: string): Promise<string> | null {
   if (!p) {
     p = tauri.imageData(abs)
     dataUrlCache.set(abs, p)
+    trimCached(dataUrlCache)
     p.catch(() => dataUrlCache.delete(abs)) // retried next render (file may appear later)
   }
   return p
@@ -66,6 +83,7 @@ export async function addImageDataUrls(markdown: string, docPath: string | null)
     if (!r || r.status === 'rejected') return null
     const url = r.value
     toSource.set(url, src)
+    trimCached(toSource)
     return url
   }
   return markdown
@@ -83,10 +101,10 @@ export async function addImageDataUrls(markdown: string, docPath: string | null)
 export function stripImageDataUrls(markdown: string): string {
   if (!markdown.includes('data:image')) return markdown
   return markdown
-    .replace(MD_DATA_URL_RE, (full) => {
+    .replace(MD_DATA_URL_RE, (full, alt: string) => {
       const url = full.slice(full.indexOf('(') + 1, -1)
       const src = toSource.get(url)
-      return src ? `![image](${src})` : full
+      return src ? `![${alt}](${src})` : full
     })
     .replace(HTML_DATA_URL_RE, (full, head: string, url: string, tail: string) => {
       const src = toSource.get(url)

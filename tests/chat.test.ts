@@ -25,6 +25,7 @@ vi.mock('../src/lib/tauri', () => ({
   },
 }))
 
+import { tauri } from '../src/lib/tauri'
 import { useChat } from '../src/stores/chat'
 
 function completeLastReply(text: string) {
@@ -82,5 +83,30 @@ describe('chat memory', () => {
     useChat.getState().send('sys', [{ role: 'user', content: 'q1' }])
     useChat.getState().send('sys', [{ role: 'user', content: 'q2' }])
     expect(streamCalls).toHaveLength(1)
+  })
+})
+
+describe('transcript cap', () => {
+  it('keeps the transcript bounded at 100 messages', () => {
+    for (let i = 1; i <= 60; i++) {
+      useChat.getState().send('sys', [{ role: 'user', content: `q${i}` }])
+      completeLastReply(`a${i}`)
+    }
+    const shown = useChat.getState().messages
+    expect(shown).toHaveLength(100)
+    expect(shown[0].content).toBe('q11')
+    expect(shown.at(-1)!.content).toBe('a60')
+  })
+
+  it('caps messages loaded from a bloated store file', async () => {
+    const bloated = Array.from({ length: 500 }, (_, i) => ({
+      role: 'user' as const,
+      content: `old-${i}`,
+    }))
+    vi.mocked(tauri.storeGet).mockResolvedValue({ messages: bloated })
+    await useChat.getState().load()
+    const shown = useChat.getState().messages
+    expect(shown).toHaveLength(100)
+    expect(shown[0].content).toBe('old-400')
   })
 })
