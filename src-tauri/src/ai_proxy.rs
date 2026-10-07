@@ -353,6 +353,8 @@ struct Utf8Lines {
     buf: Vec<u8>,
 }
 
+const MAX_LINE_BYTES: usize = 1024 * 1024;
+
 impl Utf8Lines {
     fn new() -> Self {
         Self { buf: Vec::new() }
@@ -360,6 +362,13 @@ impl Utf8Lines {
 
     fn push(&mut self, bytes: &[u8]) {
         self.buf.extend_from_slice(bytes);
+        // SSE events are per-line and tiny; a "line" with no newline past this
+        // is a broken or hostile stream — drop the buffered garbage instead of
+        // growing memory until the stream deadline. Real payloads are far
+        // under this (the completion itself is capped at 16k chars).
+        if self.buf.len() > MAX_LINE_BYTES {
+            self.buf.clear();
+        }
     }
 
     /// Next complete line (without the trailing newline), or None if the
@@ -576,6 +585,18 @@ mod tests {
         assert_eq!(l.next_line(), None);
         l.push(b"\n");
         assert_eq!(l.next_line().as_deref(), Some("ccc"));
+    }
+
+    #[test]
+    fn utf8_lines_caps_a_newlineless_flood_instead_of_growing_forever() {
+        let mut l = Utf8Lines::new();
+        // 3 MB with no newline: a broken/hostile stream. Memory must stay bounded.
+        l.push(&vec![b'x'; 3 * 1024 * 1024]);
+        assert!(l.buf.len() <= MAX_LINE_BYTES);
+        assert_eq!(l.next_line(), None);
+        // The stream recovers as soon as a real line arrives.
+        l.push(b"data: {\"ok\":1}\n");
+        assert_eq!(l.next_line().unwrap(), "data: {\"ok\":1}");
     }
 
     #[test]

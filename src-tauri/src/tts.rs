@@ -27,15 +27,25 @@ pub fn shutdown(state: &TtsState) {
     stop_internal(state);
 }
 
+/// Off-thread with a hard timeout (same pattern as the clipboard commands in
+/// fs.rs): edge-tts is a Python script whose cold import can take seconds —
+/// that must never block the main thread.
 #[tauri::command]
 pub fn tts_available() -> bool {
-    std::process::Command::new("edge-tts")
-        .arg("--help")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        tx.send(
+            std::process::Command::new("edge-tts")
+                .arg("--help")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false),
+        )
+        .ok();
+    });
+    rx.recv_timeout(Duration::from_secs(5)).unwrap_or(false)
 }
 
 #[tauri::command]

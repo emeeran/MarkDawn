@@ -187,7 +187,19 @@ pub fn read_dir(path: String, guard: State<'_, FsGuard>) -> Result<Vec<FileNode>
 pub fn read_file(path: String, guard: State<'_, FsGuard>) -> Result<String, String> {
     let p = PathBuf::from(&path);
     guard.check(&p)?;
-    fs::read_to_string(&p).map_err(|e| e.to_string())
+    read_file_capped(&p, MAX_DOC_BYTES)
+}
+
+/// A multi-GB "markdown" read whole would freeze the webview and exhaust
+/// memory — refuse past the cap (same ceiling as the image path).
+const MAX_DOC_BYTES: u64 = 20 * 1024 * 1024;
+
+fn read_file_capped(p: &Path, max: u64) -> Result<String, String> {
+    let len = fs::metadata(p).map_err(|e| e.to_string())?.len();
+    if len > max {
+        return Err(format!("file too large to open (>{} MB)", max / (1024 * 1024)));
+    }
+    fs::read_to_string(p).map_err(|e| e.to_string())
 }
 
 /// Disk mtime in whole milliseconds since the epoch (0 if before it).
@@ -413,6 +425,19 @@ enum ClipboardImage {
 /// exhausting the webview — add streaming/disk cache if docs embed big media.
 #[tauri::command]
 pub fn image_data(path: String, guard: State<'_, FsGuard>) -> Result<String, String> {
+    let p = PathBuf::from(&path);
+    guard.check(&p)?;
+    // A 20 MB read + base64 (~27 MB String) per render — off-thread with a
+    // timeout so a wedged disk can't stall the UI. Same pattern as the
+    // clipboard commands (async-command returns don't resolve on this build).
+    let (tx, rx) = mpsc::channel();
+    let inner = p.clone();
+    std::thread::spawn(move || tx.send(image_data_inner(&inner)).ok());
+    rx.recv_timeout(Duration::from_secs(5))
+        .unwrap_or(Err("image read timed out".into()))
+}
+
+fn image_data_inner(p: &Path) -> Result<String, String> {
     const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
     const MIME_BY_EXT: [(&str, &str); 6] = [
         ("png", "image/png"),
@@ -422,9 +447,7 @@ pub fn image_data(path: String, guard: State<'_, FsGuard>) -> Result<String, Str
         ("webp", "image/webp"),
         ("svg", "image/svg+xml"),
     ];
-    let p = PathBuf::from(&path);
-    guard.check(&p)?;
-    let meta = fs::metadata(&p).map_err(|e| e.to_string())?;
+    let meta = fs::metadata(p).map_err(|e| e.to_string())?;
     if meta.len() > MAX_IMAGE_BYTES {
         return Err("image too large to display".into());
     }
@@ -437,7 +460,7 @@ pub fn image_data(path: String, guard: State<'_, FsGuard>) -> Result<String, Str
         .find(|(e, _)| *e == ext)
         .map(|(_, m)| *m)
         .ok_or_else(|| "unsupported image type".to_string())?;
-    let bytes = fs::read(&p).map_err(|e| e.to_string())?;
+    let bytes = fs::read(p).map_err(|e| e.to_string())?;
     use base64::Engine as _;
     let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
     Ok(format!("data:{mime};base64,{b64}"))
@@ -1087,5 +1110,19 @@ mod tests {
         assert!(store_file_name("chat-history").is_ok());
         assert!(store_file_name("../etc/passwd").is_err());
         assert!(store_file_name("a b").is_err());
+    }
+
+    #[test]
+    fn read_file_refuses_oversized_documents() {
+        let dir = tmpdir("readcap");
+        let small = dir.join("small.md");
+        fs::write(&small, "# tiny").unwrap();
+        assert_eq!(read_file_capped(&small, 1024).unwrap(), "# tiny");
+
+        let big = dir.join("big.md");
+        fs::write(&big, vec![b'a'; 4096]).unwrap();
+        assert!(read_file_capped(&big, 1024).is_err());
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

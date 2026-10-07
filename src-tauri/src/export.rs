@@ -3,14 +3,23 @@ use tauri::ipc::Channel;
 use tauri::command;
 
 /// SYNC command — async-command responses don't resolve on this WebKitGTK
-/// build; blocking briefly on `pandoc --version` is acceptable.
+/// build. Runs off-thread with a hard timeout (same pattern as the clipboard
+/// commands in fs.rs): a hung pandoc (nfs home, broken install) must not
+/// freeze the UI while it waits.
 #[command]
 pub fn pandoc_available() -> bool {
-    std::process::Command::new("pandoc")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        tx.send(
+            std::process::Command::new("pandoc")
+                .arg("--version")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false),
+        )
+        .ok();
+    });
+    rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap_or(false)
 }
 
 /// Convert a saved Markdown file with pandoc. Channel-delivered (async
