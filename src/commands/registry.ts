@@ -154,8 +154,9 @@ export function editOp(op: 'cut' | 'copy' | 'paste' | 'selectAll') {
     (domNode.contains(document.activeElement) ||
       domNode.contains(window.getSelection()?.anchorNode ?? null))
   const selText = window.getSelection()?.toString() ?? ''
-  const text = pickCopySource(inEditor, muyaClipboardCopyCut(op), selText)
-  if (text) void tauri.clipboardWriteText(text)
+  const muyaText = muyaClipboardCopyCut(op)
+  const text = pickCopySource(inEditor, muyaText, selText)
+  if (text) void tauri.clipboardWriteText(text).catch((e) => console.error('clip write', e))
 }
 
 /** Stream a report feature into the AI panel. Tone uses the selection when there is one. */

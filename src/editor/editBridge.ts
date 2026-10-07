@@ -94,28 +94,34 @@ export function pickCopySource(inEditor: boolean, muyaText: string, selText: str
 }
 
 /**
- * Run Muya's own copy/cut handler synthetically and return the text it put on
- * the (simulated) clipboard — the Markdown form of the selection. Cut also
- * deletes the selection through Muya's history-tracked path, same as the
- * native event. Empty string = Muya had no selection to work with.
+ * Copy/cut support for the menu/keyboard bridge. The clipboard text comes from
+ * Muya's own clipboard controller — the Markdown form of the current
+ * selection. A synthetic 'cut' event is still dispatched for its DELETE
+ * side-effect (Muya's history-tracked cutHandler); clipboardData cannot be
+ * carried on synthetic ClipboardEvents (WebKit drops the init), so the text
+ * is read directly instead. Empty string = Muya had no selection to work with.
  */
 export function muyaClipboardCopyCut(op: 'copy' | 'cut'): string {
   if (!muya) return ''
-  const dt = new DataTransfer()
-  const evt = new ClipboardEvent(op, { clipboardData: dt, bubbles: true, cancelable: true })
-  muya.domNode.dispatchEvent(evt)
-  return dt.getData('text/plain') ?? ''
+  const { text } = muya.editor.clipboard.getClipboardData()
+  if (op === 'cut') {
+    muya.domNode.dispatchEvent(new ClipboardEvent('cut', { bubbles: true, cancelable: true }))
+  }
+  return text
 }
 
-/** Select the whole editor document as a DOM selection (Ctrl+A / menu Select All). */
+/** Select the whole editor document (Ctrl+A / menu Select All). Goes through
+ *  Muya's own select-all so its MODEL selection is set — a raw DOM
+ *  selectNodeContents leaves Muya unaware, and its cut/copy handlers then
+ *  silently no-op (Ctrl+X after Ctrl+A deleted nothing). */
 export function selectAllInEditor(): boolean {
   if (!muya) return false
-  const sel = window.getSelection()
-  if (!sel) return false
-  const range = document.createRange()
-  range.selectNodeContents(muya.domNode)
-  sel.removeAllRanges()
-  sel.addRange(range)
+  const selection = muya.editor.selection
+  selection.selectAll()
+  // From a collapsed caret Muya selects just the current block (Typora-style
+  // progressive select) — widen to the whole document in the same keystroke.
+  const sel = selection.getSelection()
+  if (sel && sel.anchorBlock === sel.focusBlock) selection.selectAll()
   return true
 }
 
