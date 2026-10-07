@@ -55,7 +55,12 @@ export const tauri = {
   fsAllow: (path: string) => invoke<void>('fs_allow', { path }),
   readDir: (path: string) => invoke<FileNode[]>('read_dir', { path }),
   readFile: (path: string) => invoke<string>('read_file', { path }),
-  writeFile: (path: string, contents: string) => invoke<void>('write_file', { path, contents }),
+  /** Guarded write: refuses when the disk mtime differs from expectedMtime
+   *  (the content's load-time mtime; null overwrites unconditionally).
+   *  Resolves with the post-write mtime. */
+  writeFile: (path: string, contents: string, expectedMtime?: number | null) =>
+    invoke<number>('write_file', { path, contents, expectedMtime: expectedMtime ?? null }),
+  statMtime: (path: string) => invoke<number>('stat_mtime', { path }),
   createFile: (path: string) => invoke<void>('create_file', { path }),
   createDir: (path: string) => invoke<void>('create_dir', { path }),
   rename: (path: string, newPath: string) => invoke<void>('rename', { path, newPath }),

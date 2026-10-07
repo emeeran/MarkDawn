@@ -16,10 +16,12 @@ vi.mock('../src/lib/tauri', () => ({
   tauri: {
     fsAllow: vi.fn(async () => {}),
     readFile: vi.fn(async (path: string) => `content of ${path}`),
-    writeFile: vi.fn(async (path: string, contents: string) => {
+    writeFile: vi.fn(async (path: string, contents: string, _expectedMtime?: number | null) => {
       if (path.includes('fail')) throw new Error('disk full')
       writes.push({ path, contents })
+      return 4242
     }),
+    statMtime: vi.fn(async () => 1234),
     recentPush: vi.fn(async () => {}),
     saveRecovery: vi.fn(async (title: string) => `/recovery/${title}.md`),
   },
@@ -27,6 +29,7 @@ vi.mock('../src/lib/tauri', () => ({
 }))
 
 import { useTabs } from '../src/stores/tabs'
+import { registerEmitFlush } from '../src/editor/editBridge'
 
 function seedTab(partial: Partial<Tab>): Tab {
   const tab: Tab = {
@@ -35,6 +38,7 @@ function seedTab(partial: Partial<Tab>): Tab {
     title: 'untitled',
     dirty: false,
     markdown: '',
+    mtime: null,
     ...partial,
   }
   useTabs.setState((s) => ({ tabs: [...s.tabs, tab] }))
@@ -91,7 +95,7 @@ describe('autosave', () => {
     let release!: () => void
     const gate = new Promise<void>((r) => (release = r))
     const { tauri } = await import('../src/lib/tauri')
-    vi.mocked(tauri.writeFile).mockImplementationOnce(() => gate as Promise<void>)
+    vi.mocked(tauri.writeFile).mockImplementationOnce(() => gate as unknown as Promise<number>)
 
     const tab = seedTab({ path: '/ws/a.md', markdown: 'v1' })
     useTabs.getState().setContent(tab.id, 'v2')
@@ -156,8 +160,115 @@ describe('flushAll (quit)', () => {
     seedTab({ path: '/ws/a.md', markdown: 'a', dirty: true })
     seedTab({ path: '/ws/clean.md', markdown: 'clean', dirty: false })
     seedTab({ title: 'scratch', markdown: 'untitled work', dirty: true })
-    const recovered = await useTabs.getState().flushAll()
+    const { recovered, failed } = await useTabs.getState().flushAll()
     expect(writes).toEqual([{ path: '/ws/a.md', contents: 'a' }])
     expect(recovered).toEqual(['/recovery/scratch.md'])
+    expect(failed).toEqual([])
+  })
+
+  it('reports titles whose save failed instead of swallowing them', async () => {
+    seedTab({ path: '/ws/fail.md', title: 'fail.md', markdown: 'x', dirty: true })
+    const { failed, recovered } = await useTabs.getState().flushAll()
+    expect(failed).toEqual(['fail.md'])
+    expect(recovered).toEqual([])
+  })
+})
+
+describe('mtime conflict guard', () => {
+  it('blocks a stale save, keeps the buffer dirty, and flags the tab stale', async () => {
+    const { tauri } = await import('../src/lib/tauri')
+    vi.mocked(tauri.writeFile).mockRejectedValueOnce(new Error('mtime-conflict: file changed on disk'))
+    const tab = seedTab({ path: '/ws/a.md', title: 'a.md', markdown: 'mine', dirty: true })
+    useTabs.setState({ activeId: tab.id })
+    expect(await useTabs.getState().saveById(tab.id)).toBe('failed')
+    expect(useTabs.getState().tabs[0].dirty).toBe(true) // buffer kept
+    expect(useTabs.getState().banner).toBe('This file changed on disk.')
+    // Background stale tab surfaces the banner when activated.
+    useTabs.setState({ banner: null })
+    useTabs.getState().setActive(tab.id)
+    expect(useTabs.getState().banner).toBe('This file changed on disk.')
+  })
+
+  it('saveActiveAs passes the existing file mtime as the conflict guard', async () => {
+    const { tauri } = await import('../src/lib/tauri')
+    const tab = seedTab({ markdown: 'x', dirty: true })
+    useTabs.setState({ activeId: tab.id })
+    mocks.pickSaveFile.mockResolvedValue('/ws/exists.md')
+    await useTabs.getState().saveActiveAs()
+    // statMtime's 1234 went out as expectedMtime — an unopened file the user
+    // is overwriting is protected too.
+    expect(vi.mocked(tauri.writeFile).mock.calls.at(-1)?.[2]).toBe(1234)
+  })
+
+  it('keepMine clears the stale flag and the mtime guard', async () => {
+    const { tauri } = await import('../src/lib/tauri')
+    vi.mocked(tauri.writeFile).mockRejectedValueOnce(new Error('mtime-conflict: file changed on disk'))
+    const tab = seedTab({ path: '/ws/a.md', markdown: 'x', dirty: true, mtime: 5 })
+    useTabs.setState({ activeId: tab.id })
+    await useTabs.getState().saveById(tab.id)
+    useTabs.getState().keepMine(tab.id)
+    expect(useTabs.getState().banner).toBeNull()
+    expect(useTabs.getState().tabs[0].mtime).toBeNull()
+    // Stale flag gone — re-activating shows no banner.
+    useTabs.getState().setActive(tab.id)
+    expect(useTabs.getState().banner).toBeNull()
+    // The next save goes out unguarded (deliberate overwrite).
+    await useTabs.getState().saveById(tab.id)
+    expect(vi.mocked(tauri.writeFile).mock.calls.at(-1)?.[2]).toBeNull()
+  })
+})
+
+describe('emit flush (debounced editor tail)', () => {
+  it('close flushes the editor tail before saving', async () => {
+    const tab = seedTab({ path: '/ws/flush.md', markdown: 'saved part', dirty: true })
+    registerEmitFlush(() =>
+      useTabs.setState((s) => ({
+        tabs: s.tabs.map((t) => (t.id === tab.id ? { ...t, markdown: 'saved part +tail' } : t)),
+      })),
+    )
+    await useTabs.getState().close(tab.id)
+    registerEmitFlush(null)
+    expect(writes).toEqual([{ path: '/ws/flush.md', contents: 'saved part +tail' }])
+  })
+
+  it('tab switch flushes the outgoing tab tail into its own tab', () => {
+    const a = seedTab({ path: '/ws/a.md', title: 'a.md' })
+    const b = seedTab({ path: '/ws/b.md', title: 'b.md' })
+    useTabs.setState({ activeId: a.id })
+    registerEmitFlush(() =>
+      useTabs.setState((s) => ({
+        tabs: s.tabs.map((t) => (t.id === a.id ? { ...t, markdown: 'a+tail' } : t)),
+      })),
+    )
+    useTabs.getState().setActive(b.id)
+    registerEmitFlush(null)
+    expect(useTabs.getState().tabs.find((t) => t.id === a.id)?.markdown).toBe('a+tail')
+    expect(useTabs.getState().activeId).toBe(b.id)
+  })
+})
+
+describe('saveActiveAs clash guard', () => {
+  it('refuses a path already open in another tab', async () => {
+    const other = seedTab({ path: '/ws/taken.md', title: 'taken.md' })
+    const tab = seedTab({ markdown: 'x', dirty: true })
+    useTabs.setState({ activeId: tab.id })
+    mocks.pickSaveFile.mockResolvedValue('/ws/taken.md')
+    expect(await useTabs.getState().saveActiveAs()).toBe(false)
+    expect(writes).toHaveLength(0)
+    expect(useTabs.getState().tabs.find((t) => t.id === tab.id)?.dirty).toBe(true)
+    expect(useTabs.getState().tabs.some((t) => t.id === other.id)).toBe(true)
+  })
+})
+
+describe('self-save echo window', () => {
+  it('absorbs repeated fs-changed events from one atomic write', () => {
+    const t = useTabs.getState()
+    t.noteSelfSave('/ws/a.md')
+    expect(t.consumeSelfSave('/ws/a.md')).toBe(true)
+    // Stray second event: consume misses, the 1s window catches it.
+    expect(t.consumeSelfSave('/ws/a.md')).toBe(false)
+    expect(t.wasSelfSaveRecently('/ws/a.md')).toBe(true)
+    vi.advanceTimersByTime(1000)
+    expect(t.wasSelfSaveRecently('/ws/a.md')).toBe(false)
   })
 })

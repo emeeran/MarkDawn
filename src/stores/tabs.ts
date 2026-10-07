@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { flushPendingEmit } from '../editor/editBridge'
 import { pickSaveFile, tauri } from '../lib/tauri'
 import type { Tab } from '../types'
 import { useToast } from './toast'
@@ -20,20 +21,28 @@ interface TabsStore {
   reopenClosed: () => Promise<void>
   setActive: (id: string) => void
   setContent: (id: string, markdown: string) => void
-  markSaved: (id: string, markdown: string) => void
+  markSaved: (id: string, markdown: string, mtime?: number | null) => void
   saveById: (id: string) => Promise<'saved' | 'failed' | 'skipped'>
   saveActive: () => Promise<void>
   saveActiveAs: () => Promise<boolean>
   setBanner: (msg: string | null) => void
-  /** Write every dirty named tab now; untitled dirty tabs go to recovery. Used on quit. */
-  flushAll: () => Promise<string[]>
+  /** Write every dirty named tab now; untitled dirty tabs go to recovery.
+   *  `failed` lists titles whose save did NOT land — quit must not exit
+   *  while it is non-empty (the dirty buffers are the only copy). */
+  flushAll: () => Promise<{ recovered: string[]; failed: string[] }>
   /** Record that a just-started write will echo back via fs-changed. */
   noteSelfSave: (path: string) => void
   /** True (once) if this fs-changed event is our own write's echo. */
   consumeSelfSave: (path: string) => boolean
+  /** True while within the echo window of our own write (atomic writes can
+   *  emit more than one fs-changed event for the target). */
+  wasSelfSaveRecently: (path: string) => boolean
   /** Mark a dirty tab's file as changed on disk elsewhere. */
   markStale: (path: string) => void
   clearStale: (path: string) => void
+  /** "Keep mine" on the external-change banner: keep the buffer, drop the
+   *  mtime guard so the next save deliberately overwrites the disk version. */
+  keepMine: (id: string) => void
 }
 
 // One timer per tab. A single shared timer let typing in tab B cancel tab A's
@@ -42,6 +51,13 @@ const saveTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 // Paths with a write in flight; their fs-changed echo is ours, not external.
 const selfSaves = new Set<string>()
+
+// When our last write started. Atomic rename commonly emits more than one
+// fs-changed event for the target; events within this window are echoes.
+// ponytail: 1s window can mask a genuinely external write in that sliver —
+// the mtime guard on write_file is what actually protects the data.
+const selfSaveAt = new Map<string, number>()
+const SELF_SAVE_ECHO_MS = 1000
 
 // Dirty tabs whose file changed on disk behind our backs. Surfaced as a
 // banner when the tab is (or becomes) active.
@@ -70,12 +86,14 @@ export const useTabs = create<TabsStore>((setState, get) => ({
     try {
       await tauri.fsAllow(path) // user-launched/dropped/picked → consented
       const markdown = await tauri.readFile(path)
+      const mtime = await tauri.statMtime(path).catch(() => null)
       const tab: Tab = {
         id: crypto.randomUUID(),
         path,
         title: path.split(/[\\/]/).pop() ?? path,
         dirty: false,
         markdown,
+        mtime,
       }
       setState((s) => ({ tabs: [...s.tabs, tab], activeId: tab.id, banner: null }))
       void tauri.recentPush(path)
@@ -85,11 +103,12 @@ export const useTabs = create<TabsStore>((setState, get) => ({
   },
 
   openUntitled() {
-    const tab: Tab = { id: crypto.randomUUID(), path: null, title: 'untitled', dirty: false, markdown: '' }
+    const tab: Tab = { id: crypto.randomUUID(), path: null, title: 'untitled', dirty: false, markdown: '', mtime: null }
     setState((s) => ({ tabs: [...s.tabs, tab], activeId: tab.id }))
   },
 
   async close(id) {
+    flushPendingEmit() // the editor's debounced tail belongs to this save
     const tab = get().tabs.find((t) => t.id === id)
     if (!tab) return
     clearTimer(id)
@@ -142,6 +161,7 @@ export const useTabs = create<TabsStore>((setState, get) => ({
   },
 
   setActive(id) {
+    flushPendingEmit() // flush the OUTGOING tab's tail into its own tab first
     const tab = get().tabs.find((t) => t.id === id)
     const stale = tab?.path ? stalePaths.has(tab.path) : false
     setState({ activeId: id, banner: stale ? 'This file changed on disk.' : null })
@@ -165,13 +185,14 @@ export const useTabs = create<TabsStore>((setState, get) => ({
     )
   },
 
-  markSaved(id, markdown) {
+  markSaved(id, markdown, mtime) {
     setState((s) => ({
       tabs: s.tabs.map((t) => {
         if (t.id !== id) return t
         // If the user typed while the save was in flight, keep the tab dirty —
         // silently adopting the older snapshot would drop those edits.
-        return t.markdown === markdown ? { ...t, dirty: false } : t
+        if (t.markdown !== markdown) return t
+        return { ...t, dirty: false, ...(mtime !== undefined ? { mtime } : {}) }
       }),
     }))
   },
@@ -182,12 +203,24 @@ export const useTabs = create<TabsStore>((setState, get) => ({
     if (!tab || !tab.dirty || !tab.path) return 'skipped' // untitled autosave must not pop a dialog
     try {
       get().noteSelfSave(tab.path)
-      await tauri.writeFile(tab.path, tab.markdown)
-      get().markSaved(id, tab.markdown)
+      const mtime = await tauri.writeFile(tab.path, tab.markdown, tab.mtime)
+      get().markSaved(id, tab.markdown, mtime)
       return 'saved'
     } catch (e) {
       selfSaves.delete(tab.path)
-      useToast.getState().show(`Save failed: ${e}`)
+      if (String(e).includes('mtime-conflict')) {
+        // The file changed on disk behind our backs — surface the conflict
+        // instead of clobbering whichever external writer got there first.
+        // Halt the autosave chain and toast once; the stale flag dedupes so
+        // continued typing can't turn this into a toast every 500ms.
+        clearTimer(id)
+        const first = !stalePaths.has(tab.path)
+        get().markStale(tab.path)
+        if (tab.id === get().activeId) get().setBanner('This file changed on disk.')
+        if (first) useToast.getState().show('Save blocked — the file changed on disk')
+      } else {
+        useToast.getState().show(`Save failed: ${e}`)
+      }
       return 'failed'
     }
   },
@@ -216,18 +249,30 @@ export const useTabs = create<TabsStore>((setState, get) => ({
       return null
     })
     if (!path) return false
+    // Two tabs on one path = each autosave silently clobbering the other,
+    // hidden by the self-save echo. Block the pair from forming at all.
+    const clash = get().tabs.find((t) => t.id !== id && t.path === path)
+    if (clash) {
+      useToast.getState().show(`"${clash.title}" is already open in another tab — close it first`)
+      return false
+    }
     try {
       await tauri.fsAllow(path)
-      await tauri.writeFile(path, tab.markdown)
+      // Overwriting an existing file this tab never loaded must not silently
+      // clobber it: pass its current mtime so a concurrent change is caught.
+      const existingMtime = await tauri.statMtime(path).catch(() => null)
+      const mtime = await tauri.writeFile(path, tab.markdown, existingMtime)
+      setState((s) => ({
+        tabs: s.tabs.map((t) =>
+          t.id === id
+            ? { ...t, path, title: path.split(/[\\/]/).pop() ?? path, dirty: false, mtime }
+            : t,
+        ),
+      }))
     } catch (e) {
       useToast.getState().show(`Save failed: ${e}`)
       return false
     }
-    setState((s) => ({
-      tabs: s.tabs.map((t) =>
-        t.id === id ? { ...t, path, title: path.split(/[\\/]/).pop() ?? path, dirty: false } : t,
-      ),
-    }))
     void tauri.recentPush(path)
     return true
   },
@@ -238,10 +283,21 @@ export const useTabs = create<TabsStore>((setState, get) => ({
 
   noteSelfSave(path) {
     selfSaves.add(path)
+    selfSaveAt.set(path, Date.now())
   },
 
   consumeSelfSave(path) {
     return selfSaves.delete(path)
+  },
+
+  wasSelfSaveRecently(path) {
+    const at = selfSaveAt.get(path)
+    if (at === undefined) return false
+    if (Date.now() - at >= SELF_SAVE_ECHO_MS) {
+      selfSaveAt.delete(path)
+      return false
+    }
+    return true
   },
 
   markStale(path) {
@@ -252,12 +308,22 @@ export const useTabs = create<TabsStore>((setState, get) => ({
     stalePaths.delete(path)
   },
 
+  keepMine(id) {
+    const tab = get().tabs.find((t) => t.id === id)
+    if (tab?.path) stalePaths.delete(tab.path)
+    setState((s) => ({
+      banner: null,
+      tabs: s.tabs.map((t) => (t.id === id ? { ...t, mtime: null } : t)),
+    }))
+  },
+
   async flushAll() {
     const recovered: string[] = []
+    const failed: string[] = []
     for (const tab of get().tabs) {
       if (!tab.dirty) continue
       if (tab.path) {
-        await get().saveById(tab.id)
+        if ((await get().saveById(tab.id)) === 'failed') failed.push(tab.title)
       } else {
         try {
           const where = await tauri.saveRecovery(tab.title, tab.markdown)
@@ -270,6 +336,6 @@ export const useTabs = create<TabsStore>((setState, get) => ({
     if (recovered.length > 0) {
       useToast.getState().show(`Untitled work saved to ${recovered.join(', ')}`)
     }
-    return recovered
+    return { recovered, failed }
   },
 }))

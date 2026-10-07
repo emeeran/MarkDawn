@@ -21,15 +21,21 @@ export const useSettings = create<SettingsStore>((setState, get) => ({
   loaded: false,
   async load() {
     try {
-      const stored = await tauri.settingsGet()
-      const merged = { ...DEFAULT_SETTINGS, ...(stored as Partial<Settings>) }
+      const stored = (await tauri.settingsGet()) as Partial<Settings> | null
+      // Per-key hygiene: a hand-edited or partially corrupt settings.json must
+      // not reset the whole config (Rust preserves a fully corrupt file; this
+      // guards one that parses but holds a bad `models`).
+      const models =
+        stored?.models && typeof stored.models === 'object'
+          ? { ...DEFAULT_SETTINGS.models, ...stored.models }
+          : { ...DEFAULT_SETTINGS.models }
       // Migrate non-chat models that can't stream (e.g. Groq prompt-guard).
-      for (const p of Object.keys(merged.models) as (keyof Settings['models'])[]) {
-        if (NON_CHAT_MODEL.test(merged.models[p])) {
-          merged.models[p] = DEFAULT_SETTINGS.models[p]
+      for (const p of Object.keys(models) as (keyof Settings['models'])[]) {
+        if (NON_CHAT_MODEL.test(models[p] ?? '')) {
+          models[p] = DEFAULT_SETTINGS.models[p]
         }
       }
-      setState({ ...merged, loaded: true })
+      setState({ ...DEFAULT_SETTINGS, ...stored, models, loaded: true })
     } catch {
       setState({ loaded: true })
     }

@@ -13,6 +13,20 @@ export function registerMuya(m: Muya | null) {
   muya = m
 }
 
+// MuyaEditor registers a flush for its pending debounced emit. Store actions
+// that read or destroy tab state (tab close, tab switch, quit) call
+// flushPendingEmit() FIRST — otherwise keystrokes in the last 80ms of the
+// debounce window never reach the store and are lost.
+let flushPending: (() => void) | null = null
+
+export function registerEmitFlush(fn: (() => void) | null) {
+  flushPending = fn
+}
+
+export function flushPendingEmit() {
+  flushPending?.()
+}
+
 export function getMuya(): Muya | null {
   return muya
 }
@@ -30,15 +44,23 @@ export function setContent(markdown: string) {
  * muya.focus() moves the caret to the START of the document (its only
  * focus() does setCursor(0,0)), so a captured range must be re-added AFTER
  * any focus call — this ordering is what makes deferred applies land right.
+ * Returns false when a supplied range is STALE: its nodes belong to a
+ * document that is no longer mounted (tab switch while an AI edit streamed).
+ * Applying it would insert into whatever the live caret points at — another
+ * tab's file — so callers must abort instead.
  */
-function focusAndRetarget(range?: Range | null) {
-  if (!muya) return
+function focusAndRetarget(range?: Range | null): boolean {
+  if (!muya) return false
+  if (range && (!range.startContainer.isConnected || !muya.domNode.contains(range.startContainer))) {
+    return false
+  }
   const el = document.activeElement
   const focusedEntry = el instanceof HTMLElement && (el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')
   if (focusedEntry ? !muya.domNode.contains(el) : !muya.domNode.contains(window.getSelection()?.anchorNode ?? null)) {
     muya.focus()
   }
   restoreRange(range ?? null)
+  return true
 }
 
 /**
@@ -52,7 +74,7 @@ export function insertText(text: string, range?: Range | null): boolean {
   if (!muya) return false
   // Never focus while the caret already lives in the editor (image paste, AI
   // inserts, format wraps all arrive with the caret in place).
-  focusAndRetarget(range)
+  if (!focusAndRetarget(range)) return false
   return document.execCommand('insertText', false, text)
 }
 
@@ -69,7 +91,9 @@ export async function insertMarkdown(markdown: string, range?: Range | null): Pr
 
   // Muya's paste handler maps the LIVE DOM selection onto its blocks (and
   // cut+reinserts for multi-block targets), so pin the captured range first.
-  focusAndRetarget(range)
+  // A stale range aborts here — the fallback below must never fire for it,
+  // or the text lands at the live caret of whatever tab is now mounted.
+  if (!focusAndRetarget(range)) return false
   const before = getMarkdown()
   const dt = new DataTransfer()
   dt.setData('text/plain', markdown)

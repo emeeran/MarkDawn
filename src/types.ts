@@ -11,6 +11,9 @@ export interface Tab {
   title: string
   dirty: boolean
   markdown: string
+  /** Disk mtime (ms) the content was loaded with — the write_file conflict
+   *  guard. null = unguarded (new file, or the user chose "Keep mine"). */
+  mtime: number | null
 }
 
 export type ProviderId = 'anthropic' | 'openai' | 'groq' | 'ollama'

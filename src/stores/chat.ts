@@ -26,9 +26,20 @@ export const useChat = create<ChatStore>((setState, get) => ({
 
   async load() {
     try {
-      const stored = await tauri.storeGet(STORE)
-      const messages = (stored as { messages?: ChatMessage[] }).messages
-      if (Array.isArray(messages)) setState({ messages })
+      const stored = (await tauri.storeGet(STORE)) as { messages?: unknown }
+      if (Array.isArray(stored.messages)) {
+        // Keep only well-formed messages: send() trims content, so a stray
+        // non-string entry used to throw on every subsequent send until the
+        // store was manually cleared.
+        const messages = stored.messages.filter(
+          (m): m is ChatMessage =>
+            !!m &&
+            typeof m === 'object' &&
+            ((m as ChatMessage).role === 'user' || (m as ChatMessage).role === 'assistant') &&
+            typeof (m as ChatMessage).content === 'string',
+        )
+        setState({ messages })
+      }
     } catch {
       /* fresh install */
     }

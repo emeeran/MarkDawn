@@ -7,6 +7,7 @@ import type { ITocItem } from '@muyajs/core'
 import markDawnLogo from './assets/markdawn-logo.png'
 import { captureRange, readDomSelection, setSelection } from './ai/selection'
 import { runSelectionTransform } from './ai/transform'
+import { flushPendingEmit } from './editor/editBridge'
 import { isReading } from './ai/tts'
 import { FORMAT_ACTIONS, PARAGRAPH_ACTIONS } from './editor/inserts'
 import { MuyaEditor } from './editor/MuyaEditor'
@@ -48,11 +49,18 @@ let quitting = false
 async function quitFlow() {
   if (quitting) return
   quitting = true
-  try {
-    await useTabs.getState().flushAll()
-  } finally {
-    await invoke('quit_now').catch(() => {})
+  flushPendingEmit() // the editor's 80ms emit tail belongs to this flush
+  const { failed } = await useTabs.getState().flushAll()
+  if (failed.length > 0) {
+    // The dirty buffers are the only copy of that text — refuse to exit.
+    // quitting resets so the user can retry once the disk problem is fixed.
+    quitting = false
+    useToast.getState().show(`Not quitting — save failed: ${failed.join(', ')}`)
+    return
   }
+  await invoke('quit_now').catch(() => {
+    quitting = false // quit didn't happen — allow a later retry to flush
+  })
 }
 
 export function App() {
@@ -206,13 +214,19 @@ export function App() {
     const t = useTabs.getState()
     for (const tab of t.tabs) {
       if (!tab.path || !paths.includes(tab.path)) continue
-      // Our own autosave echoes back — not an external change.
-      if (t.consumeSelfSave(tab.path)) continue
+      const p = tab.path
+      // Our own autosave echoes back — not an external change. Atomic rename
+      // can emit more than one event for the target; the 1s window absorbs
+      // the strays so a save-time keystroke doesn't fake a conflict banner.
+      if (t.consumeSelfSave(p) || t.wasSelfSaveRecently(p)) continue
       if (!tab.dirty) {
         // Quietly adopt the newer file (any tab, not just the active one).
-        void tauri.readFile(tab.path).then((md) => t.markSaved(tab.id, md)).catch(() => {})
+        void tauri
+          .readFile(p)
+          .then((md) => tauri.statMtime(p).then((mtime) => t.markSaved(tab.id, md, mtime)))
+          .catch(() => {})
       } else {
-        t.markStale(tab.path)
+        t.markStale(p)
         if (tab.id === t.activeId) t.setBanner('This file changed on disk.')
         // Background dirty tabs surface the banner when activated (setActive).
       }
@@ -224,8 +238,12 @@ export function App() {
     const active = t.tabs.find((tab) => tab.id === t.activeId)
     setBanner(null)
     if (active?.path) {
-      t.clearStale(active.path)
-      void tauri.readFile(active.path).then((md) => t.markSaved(active.id, md)).catch(() => {})
+      const p = active.path
+      t.clearStale(p)
+      void tauri
+        .readFile(p)
+        .then((md) => tauri.statMtime(p).then((mtime) => t.markSaved(active.id, md, mtime)))
+        .catch(() => {})
     }
   }
 
@@ -297,7 +315,12 @@ export function App() {
               <span>{banner}</span>
               <span className="banner-actions">
                 <button onClick={reloadFromDisk}>Reload from disk</button>
-                <button onClick={() => setBanner(null)}>Keep mine</button>
+                {/* keepMine also drops the mtime guard + stale flag — the old
+                    "Keep mine" only hid the banner, which reappeared on every
+                    tab switch, and the next autosave still clobbered. */}
+                <button onClick={() => activeTab && useTabs.getState().keepMine(activeTab.id)}>
+                  Keep mine
+                </button>
               </span>
             </div>
           )}

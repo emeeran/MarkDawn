@@ -7,7 +7,7 @@ import { useToast } from '../stores/toast'
 import type { ITocItem } from '@muyajs/core'
 import type { SelectionInfo, Tab } from '../types'
 import { readDomSelection, setSelection } from '../ai/selection'
-import { insertText, registerMuya } from './editBridge'
+import { insertText, registerEmitFlush, registerMuya } from './editBridge'
 import { editOp } from '../commands/registry'
 import { addImageDataUrls, stripImageDataUrls } from './imageMap'
 import { registerMuyaPlugins, setActiveDocPath } from './muyaSetup'
@@ -66,6 +66,18 @@ export function MuyaEditor({ tab, onInput, onSelection }: Props) {
       const md = stripImageDataUrls(muya.getMarkdown())
       lastEmitted.current = md
       onInput(md, muya.getTOC())
+    }
+
+    // Immediate emit for close/quit/tab-switch. Goes straight to the store by
+    // tab id (not onInput, whose activeId closure may already be the NEXT tab
+    // by the time this runs).
+    function flushNow() {
+      clearTimeout(emitTimer)
+      emitTimer = undefined
+      if (!muya) return
+      const md = stripImageDataUrls(muya.getMarkdown())
+      lastEmitted.current = md
+      useTabs.getState().setContent(tab.id, md)
     }
 
     const debouncedEmit = () => {
@@ -228,6 +240,7 @@ export function MuyaEditor({ tab, onInput, onSelection }: Props) {
 
     function teardown() {
       alive = false
+      registerEmitFlush(null)
       hostRef.current?.removeEventListener('paste', onPaste, true)
       hostRef.current?.removeEventListener('keydown', onCopyKey, true)
       window.removeEventListener('notepad:drop-image', onDropImage)
@@ -265,6 +278,7 @@ export function MuyaEditor({ tab, onInput, onSelection }: Props) {
       setActiveDocPath(tab.path)
       instance.on('json-change', debouncedEmit)
       instance.on('selection-change', onSelChange)
+      registerEmitFlush(flushNow)
     })
 
     host.addEventListener('paste', onPaste, true)
