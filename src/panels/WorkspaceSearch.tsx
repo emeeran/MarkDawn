@@ -19,6 +19,7 @@ interface Hit {
 export function WorkspaceSearch({ onClose }: { onClose: () => void }) {
   const [query, setQuery] = useState('')
   const [caseSensitive, setCaseSensitive] = useState(false)
+  const [useRegex, setUseRegex] = useState(false)
   const [hits, setHits] = useState<Hit[] | null>(null)
   const [index, setIndex] = useState(0)
   const [searching, setSearching] = useState(false)
@@ -27,16 +28,19 @@ export function WorkspaceSearch({ onClose }: { onClose: () => void }) {
 
   useEffect(() => inputRef.current?.focus(), [])
 
-  async function run() {
+  async function run(notify = true) {
     const q = query.trim()
     if (!q || !root) return
     setSearching(true)
     try {
-      const results = await tauri.workspaceSearch(root, q, caseSensitive)
+      const results = await tauri.workspaceSearch(root, q, caseSensitive, useRegex)
       setHits(results)
       setIndex(0)
     } catch (e) {
-      useToast.getState().show(`Search: ${e}`)
+      // Invalid regex while typing is routine — show "No matches" quietly;
+      // only an explicit Enter toasts the reason.
+      setHits([])
+      if (notify) useToast.getState().show(`Search: ${e}`)
     } finally {
       setSearching(false)
     }
@@ -45,10 +49,10 @@ export function WorkspaceSearch({ onClose }: { onClose: () => void }) {
   // Re-run on query change (debounced) once a first search happened.
   useEffect(() => {
     if (hits === null) return
-    const t = setTimeout(() => void run(), 250)
+    const t = setTimeout(() => void run(false), 250)
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, caseSensitive])
+  }, [query, caseSensitive, useRegex])
 
   function openHit(hit?: Hit) {
     if (!hit) return
@@ -79,6 +83,9 @@ export function WorkspaceSearch({ onClose }: { onClose: () => void }) {
           />
           <label className="find-opt" title="Match case">
             <input type="checkbox" checked={caseSensitive} onChange={(e) => setCaseSensitive(e.target.checked)} /> Aa
+          </label>
+          <label className="find-opt" title="Regular expression">
+            <input type="checkbox" checked={useRegex} onChange={(e) => setUseRegex(e.target.checked)} /> .*
           </label>
         </div>
         <div className="palette-list">

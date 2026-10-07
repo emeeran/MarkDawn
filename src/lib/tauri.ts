@@ -103,11 +103,11 @@ export const tauri = {
   storeGet: (name: string) => invoke<Record<string, unknown>>('store_get', { name }),
   storeSet: (name: string, value: unknown) => invoke<void>('store_set', { name, value }),
 
-  /** Literal-substring search across text files in the workspace. */
-  workspaceSearch: (root: string, query: string, caseSensitive: boolean) =>
+  /** Substring or regex search across text files in the workspace. */
+  workspaceSearch: (root: string, query: string, caseSensitive: boolean, useRegex: boolean) =>
     cmdWithChannel<
       { path: string; line: string; lineNo: number }[]
-    >('workspace_search', { root, query, caseSensitive }),
+    >('workspace_search', { root, query, caseSensitive, useRegex }),
 
   /** Files passed to the first app launch (`notepad foo.md`). */
   startupFiles: () => invoke<string[]>('startup_files'),

@@ -2245,6 +2245,7 @@ dependencies = [
  "futures-util",
  "keyring",
  "notify",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

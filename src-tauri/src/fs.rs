@@ -853,15 +853,44 @@ const MAX_SEARCH_FILES: usize = 4_000;
 const MAX_SEARCH_DEPTH: usize = 12;
 const MAX_SEARCH_FILE_BYTES: u64 = 512 * 1024;
 
-/// Literal substring search across the workspace's text files.
-/// ponytail: case-folded substring match, no regex — covers the actual need
-/// without pulling in a regex/grep dependency; the in-document find bar has
-/// regex if it's wanted.
+/// What to match a search line against: a case-folded substring or a regex.
+enum SearchNeedle {
+    Literal { text: String, case_sensitive: bool },
+    Regex(regex::Regex),
+}
+
+impl SearchNeedle {
+    fn matches(&self, line: &str) -> bool {
+        match self {
+            SearchNeedle::Literal { text, case_sensitive } => {
+                if *case_sensitive { line.contains(text.as_str()) } else { line.to_lowercase().contains(text) }
+            }
+            SearchNeedle::Regex(re) => re.is_match(line),
+        }
+    }
+}
+
+fn build_needle(query: String, case_sensitive: bool, use_regex: bool) -> Result<SearchNeedle, String> {
+    if !use_regex {
+        return Ok(SearchNeedle::Literal {
+            text: if case_sensitive { query } else { query.to_lowercase() },
+            case_sensitive,
+        });
+    }
+    regex::RegexBuilder::new(&query)
+        .case_insensitive(!case_sensitive)
+        .build()
+        .map(SearchNeedle::Regex)
+        .map_err(|e| format!("invalid regex: {e}"))
+}
+
+/// Substring or regex search across the workspace's text files.
 #[tauri::command]
 pub fn workspace_search(
     root: String,
     query: String,
     case_sensitive: bool,
+    use_regex: bool,
     guard: State<'_, FsGuard>,
     on_result: Channel<crate::pick::Cmd<Vec<SearchHit>>>,
 ) {
@@ -873,11 +902,15 @@ pub fn workspace_search(
         } else if query.is_empty() {
             Ok(Vec::new())
         } else {
-            let needle = if case_sensitive { query.clone() } else { query.to_lowercase() };
-            let mut hits = Vec::new();
-            let mut visited = 0usize;
-            walk_search(&root_path, &needle, case_sensitive, 0, &mut visited, &mut hits);
-            Ok(hits)
+            match build_needle(query, case_sensitive, use_regex) {
+                Ok(needle) => {
+                    let mut hits = Vec::new();
+                    let mut visited = 0usize;
+                    walk_search(&root_path, &needle, 0, &mut visited, &mut hits);
+                    Ok(hits)
+                }
+                Err(e) => Err(e),
+            }
         };
         let result = match out {
             Ok(v) => crate::pick::Cmd { ok: true, value: v, error: None },
@@ -887,7 +920,7 @@ pub fn workspace_search(
     });
 }
 
-fn walk_search(dir: &Path, needle: &str, case_sensitive: bool, depth: usize, visited: &mut usize, hits: &mut Vec<SearchHit>) {
+fn walk_search(dir: &Path, needle: &SearchNeedle, depth: usize, visited: &mut usize, hits: &mut Vec<SearchHit>) {
     if depth > MAX_SEARCH_DEPTH || hits.len() >= MAX_SEARCH_HITS || *visited >= MAX_SEARCH_FILES {
         return;
     }
@@ -902,7 +935,7 @@ fn walk_search(dir: &Path, needle: &str, case_sensitive: bool, depth: usize, vis
         let Ok(ft) = entry.file_type() else { continue };
         if ft.is_dir() {
             if !name.starts_with('.') && !SEARCH_SKIP_DIRS.contains(&name.as_str()) {
-                walk_search(&entry.path(), needle, case_sensitive, depth + 1, visited, hits);
+                walk_search(&entry.path(), needle, depth + 1, visited, hits);
             }
             continue;
         }
@@ -918,8 +951,7 @@ fn walk_search(dir: &Path, needle: &str, case_sensitive: bool, depth: usize, vis
         let path = entry.path().to_string_lossy().to_string();
         let mut per_file = 0usize;
         for (i, line) in text.lines().enumerate() {
-            let hay = if case_sensitive { line } else { &line.to_lowercase() };
-            if hay.contains(needle) {
+            if needle.matches(line) {
                 hits.push(SearchHit { path: path.clone(), line: line.to_string(), line_no: i + 1 });
                 per_file += 1;
                 if hits.len() >= MAX_SEARCH_HITS || per_file >= 20 {
@@ -938,6 +970,30 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("notepad-test-{name}-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn workspace_search_regex_and_bad_patterns() {
+        let dir = tmpdir("wsregex");
+        fs::write(dir.join("notes.md"), "todo: fix the thing\nTODO 42: harder\nplain line\n").unwrap();
+        let mut hits = Vec::new();
+        let mut visited = 0usize;
+
+        // Regex: anchored word + wildcard, case-insensitive by default.
+        let needle = build_needle(r"^todo \d+".into(), false, true).unwrap();
+        walk_search(&dir, &needle, 0, &mut visited, &mut hits);
+        assert_eq!(hits.len(), 1, "only the TODO 42 line matches ^todo \\d+");
+        assert_eq!(hits[0].line_no, 2);
+
+        // Literal mode still works through the same path.
+        hits.clear();
+        let needle = build_needle("the thing".into(), false, false).unwrap();
+        walk_search(&dir, &needle, 0, &mut visited, &mut hits);
+        assert_eq!(hits.len(), 1);
+
+        // Invalid regex is an error, not a panic or silent empty.
+        assert!(build_needle("(unclosed".into(), false, true).is_err());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
