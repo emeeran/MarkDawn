@@ -27,9 +27,12 @@ pub fn watch_state() -> WatchState {
     WatchState { watcher: None, root: None }
 }
 
-/// Atomic write: temp file in the same directory, then rename over the target.
-/// A crash mid-write can never leave a half-written document.
+/// Atomic write: temp file in the same directory, synced, then renamed over
+/// the target. A crash mid-write can never leave a half-written document, and
+/// the fsync closes the delayed-allocation hole where a power cut could rename
+/// an EMPTY file over the target. Failed writes leave no .tmp behind.
 pub(crate) fn atomic_write(path: &Path, contents: &str) -> Result<(), String> {
+    use std::io::Write as _;
     let dir = path
         .parent()
         .ok_or_else(|| "invalid path".to_string())?;
@@ -39,8 +42,18 @@ pub(crate) fn atomic_write(path: &Path, contents: &str) -> Result<(), String> {
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "notepad".into())
     ));
-    fs::write(&tmp, contents).map_err(|e| e.to_string())?;
-    fs::rename(&tmp, path).map_err(|e| e.to_string())?;
+    let mut f = fs::File::create(&tmp).map_err(|e| e.to_string())?;
+    if let Err(e) = f
+        .write_all(contents.as_bytes())
+        .and_then(|_| f.sync_all())
+    {
+        let _ = fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
+    if let Err(e) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
     Ok(())
 }
 
@@ -177,11 +190,51 @@ pub fn read_file(path: String, guard: State<'_, FsGuard>) -> Result<String, Stri
     fs::read_to_string(&p).map_err(|e| e.to_string())
 }
 
+/// Disk mtime in whole milliseconds since the epoch (0 if before it).
+pub(crate) fn mtime_ms(path: &Path) -> Result<u64, String> {
+    let mtime = fs::metadata(path).map_err(|e| e.to_string())?.modified().map_err(|e| e.to_string())?;
+    Ok(mtime
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0))
+}
+
+/// Conflict guard: when `expected` is Some, the file on disk must still carry
+/// the mtime the caller loaded it with — otherwise something else changed it
+/// and our write would silently clobber that version.
+/// ponytail: ms truncation can miss an external write in the same millisecond
+/// as our own save; the fs-changed watcher covers that sliver.
+fn check_mtime(path: &Path, expected: Option<u64>) -> Result<(), String> {
+    match expected {
+        None => Ok(()), // unguarded: new file, or the user chose "Keep mine"
+        Some(expected) if expected == mtime_ms(path)? => Ok(()),
+        Some(_) => Err("mtime-conflict: file changed on disk".into()),
+    }
+}
+
+/// Write a tab to disk, guarded: `expected_mtime` is the mtime the frontend
+/// loaded the content with (null = overwrite unconditionally). Returns the
+/// post-write mtime for the next round of conflict checks.
 #[tauri::command]
-pub fn write_file(path: String, contents: String, guard: State<'_, FsGuard>) -> Result<(), String> {
+pub fn write_file(
+    path: String,
+    contents: String,
+    expected_mtime: Option<u64>,
+    guard: State<'_, FsGuard>,
+) -> Result<u64, String> {
     let p = PathBuf::from(&path);
     guard.check(&p)?;
-    atomic_write(&p, &contents)
+    check_mtime(&p, expected_mtime)?;
+    atomic_write(&p, &contents)?;
+    mtime_ms(&p)
+}
+
+/// mtime probe for the frontend's conflict tracking (open / reload paths).
+#[tauri::command]
+pub fn stat_mtime(path: String, guard: State<'_, FsGuard>) -> Result<u64, String> {
+    let p = PathBuf::from(&path);
+    guard.check(&p)?;
+    mtime_ms(&p)
 }
 
 #[tauri::command]
@@ -662,10 +715,7 @@ fn config_path(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
 #[tauri::command]
 pub fn recent_get(app: AppHandle) -> Result<Vec<String>, String> {
     let path = config_path(&app, "recent.json")?;
-    Ok(fs::read_to_string(path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default())
+    Ok(read_json_preserving_corrupt(&path, Vec::new()))
 }
 
 #[tauri::command]
@@ -698,14 +748,32 @@ pub fn settings_set(app: AppHandle, settings: serde_json::Value) -> Result<(), S
     store_set(app, "settings".into(), settings)
 }
 
+/// Read a JSON store file; a CORRUPT one is renamed aside (kept for manual
+/// recovery) instead of being silently replaced — a truncated settings.json
+/// used to reset the user's whole config with no trace the next time the app
+/// saved. A missing file is just a fresh install.
+fn read_json_preserving_corrupt<T: serde::de::DeserializeOwned>(path: &Path, default: T) -> T {
+    let Ok(s) = fs::read_to_string(path) else {
+        return default;
+    };
+    match serde_json::from_str(&s) {
+        Ok(v) => v,
+        Err(_) => {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            let _ = fs::rename(path, PathBuf::from(format!("{}.corrupt-{stamp}", path.display())));
+            default
+        }
+    }
+}
+
 /// Generic named JSON store in the app config dir (settings, chat history, …).
 #[tauri::command]
 pub fn store_get(app: AppHandle, name: String) -> Result<serde_json::Value, String> {
     let path = config_path(&app, &store_file_name(&name)?)?;
-    Ok(fs::read_to_string(path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({})))
+    Ok(read_json_preserving_corrupt(&path, serde_json::json!({})))
 }
 
 #[tauri::command]
@@ -895,6 +963,73 @@ mod tests {
             atomic_write(&target, &format!("v{i}")).unwrap();
             assert_eq!(fs::read_to_string(&target).unwrap(), format!("v{i}"));
         }
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn atomic_write_cleans_temp_when_rename_fails() {
+        let dir = tmpdir("atomic3");
+        // A directory can't be renamed over — the write fails at the rename.
+        let target = dir.join("doc.md");
+        fs::create_dir(&target).unwrap();
+        assert!(atomic_write(&target, "x").is_err());
+        let leftovers: Vec<String> = fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(leftovers.iter().all(|n| !n.ends_with(".tmp")));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn mtime_guard_rejects_stale_and_missing_files() {
+        let dir = tmpdir("mtime");
+        let f = dir.join("doc.md");
+        fs::write(&f, "v1").unwrap();
+        let m1 = mtime_ms(&f).unwrap();
+        assert!(check_mtime(&f, Some(m1)).is_ok());
+        assert!(check_mtime(&f, None).is_ok());
+
+        // File changes underneath → the old mtime no longer passes.
+        std::thread::sleep(Duration::from_millis(5));
+        fs::write(&f, "v2 (external edit)").unwrap();
+        let m2 = mtime_ms(&f).unwrap();
+        assert_ne!(m1, m2);
+        assert!(check_mtime(&f, Some(m1)).is_err());
+        assert!(check_mtime(&f, Some(m2)).is_ok());
+
+        // A deleted file is a conflict too — writing would resurrect it.
+        fs::remove_file(&f).unwrap();
+        assert!(check_mtime(&f, Some(m2)).is_err());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn corrupt_store_is_preserved_not_silently_reset() {
+        let dir = tmpdir("corrupt");
+        let f = dir.join("settings.json");
+        fs::write(&f, "{\"theme\": \"nigh").unwrap(); // truncated mid-write
+        let v: serde_json::Value = read_json_preserving_corrupt(&f, serde_json::json!({}));
+        assert_eq!(v, serde_json::json!({}));
+        // The corrupt bytes survive under a .corrupt-* name for recovery.
+        let kept: Vec<PathBuf> = fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.to_string_lossy().contains("corrupt"))
+            .collect();
+        assert_eq!(kept.len(), 1);
+        assert!(fs::read_to_string(&kept[0]).unwrap().contains("nigh"));
+
+        // Valid JSON is read in place; missing files are just defaults.
+        fs::write(&f, "{\"a\":1}").unwrap();
+        let v: serde_json::Value = read_json_preserving_corrupt(&f, serde_json::json!({}));
+        assert_eq!(v, serde_json::json!({"a":1}));
+        let v: Vec<String> = read_json_preserving_corrupt(&dir.join("absent.json"), Vec::new());
+        assert!(v.is_empty());
+
         fs::remove_dir_all(&dir).unwrap();
     }
 

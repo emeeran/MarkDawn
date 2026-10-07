@@ -42,6 +42,7 @@ pub fn run() {
             fs::read_dir,
             fs::read_file,
             fs::write_file,
+            fs::stat_mtime,
             fs::create_file,
             fs::create_dir,
             fs::rename,
