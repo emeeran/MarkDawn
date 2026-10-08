@@ -19,12 +19,18 @@ const out = join(root, 'src/assets')
 // (markup-templating for php, c for cpp, clike for the C-family, json for
 // json5, markup for jsx/markdown). latex is preloaded by muya itself at
 // startup for math blocks — removing it breaks app boot (2026-10 regression).
+// The rest of the tail is the require/optional/modify closure of that set:
+// muya's prism resolver THROWS "depends on an unknown component" for a
+// missing optional too (regex, 2026-10 regression), so every target of a
+// kept language must ship. The check below enforces this — if it fires,
+// add the named languages here.
 const KEEP = new Set([
   'markup', 'css', 'clike', 'javascript', 'typescript', 'jsx', 'tsx',
   'json', 'json5', 'yaml', 'toml', 'ini', 'bash', 'python', 'rust', 'go',
   'java', 'c', 'cpp', 'csharp', 'sql', 'xml', 'markdown', 'diff', 'lua',
   'php', 'ruby', 'kotlin', 'swift', 'docker', 'makefile', 'git', 'http',
-  'markup-templating', 'latex',
+  'markup-templating', 'latex', 'regex', 'jsdoc', 'javadoclike', 'csp',
+  'hpkp', 'hsts', 'uri', 'actionscript', 'coffeescript',
 ])
 
 // 1. prism chunks. Entries are `"…/prism-<lang>[.min].js": () => import("…")`
@@ -38,6 +44,11 @@ const ENTRY_RE = new RegExp(
   'g',
 )
 let js = readFileSync(join(lib, 'es/index.js'), 'utf8')
+// Entries present before any trim — used by the dep-closure guard below to
+// tell "we dropped it" (regression) from "muya never shipped it" (ignore).
+const preTrimEntries = new Set(
+  [...js.matchAll(/\n\t\t\t([a-z0-9-]+): \{[^{}]*owner: [^{}]*\}/g)].map((m) => m[1]),
+)
 let dropped = 0
 js = js.replace(ENTRY_RE, (full, lang) => (KEEP.has(lang) ? full : (dropped++, '')))
 if (dropped === 0 && js.includes('prism-abap')) {
@@ -61,6 +72,23 @@ js = js.replace(/\n\t\t\t([a-z0-9-]+): \{[^{}]*owner: "[^"]*"[^{}]*\}(,)?/g, (en
 })
 writeFileSync(join(lib, 'es/index.js'), js)
 console.log(`trim-muya: dropped ${metaDropped} language metadata entries`)
+
+// Dep-closure guard: kept languages' require/optional/modify targets must not
+// point at a metadata entry we dropped (the resolver throws at runtime, see
+// above). Targets with no entry at all (js-extras, markup-templating) were
+// never resolvable — pre-existing muya behavior, not ours to fix.
+const entryRe = /\n\t\t\t([a-z0-9-]+): \{([^{}]*owner: [^{}]*)\}/g
+const kept = new Set([...js.matchAll(entryRe)].map((m) => m[1]))
+for (const [, lang, body] of js.matchAll(entryRe)) {
+  for (const f of ['require', 'optional', 'modify']) {
+    const t = body.match(new RegExp(f + ': ("[^"]*"|\\[[^\\]]*\\])'))
+    for (const target of t ? [...t[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]) : [])
+      if (!kept.has(target) && preTrimEntries.has(target)) {
+        console.error(`trim-muya: ${lang}.${f} -> "${target}" was dropped — add it to KEEP`)
+        process.exit(1)
+      }
+  }
+}
 
 // 2. woff2-only font css. Per @font-face block: keep just the woff2 source;
 // faces with no woff2 (DejaVu Sans Mono is ttf-only) drop entirely — the
