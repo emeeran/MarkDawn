@@ -12,10 +12,13 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     let ai = ai_menu(app)?;
     let view = view_menu(app)?;
     let themes = themes_menu(app)?;
+    let read_aloud = read_aloud_menu(app)?;
     let help = help_menu(app)?;
 
     let menu = MenuBuilder::new(app)
-        .items(&[&file, &edit, &paragraph, &format, &ai, &view, &themes, &help])
+        .items(&[
+            &file, &edit, &paragraph, &format, &ai, &read_aloud, &view, &themes, &help,
+        ])
         .build()?;
 
     if let Some(window) = app.get_webview_window("main") {
@@ -80,7 +83,6 @@ fn export_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
 
 fn edit_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
     let m = Submenu::new(app, "Edit", true)?;
-    let read_aloud = read_aloud_menu(app)?;
     m.append_items(&[
         // Real items, not PredefinedMenuItem::undo/redo — those are no-ops on
         // Linux; undo/redo must reach the webview and drive Muya's history.
@@ -97,8 +99,6 @@ fn edit_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
         &sep(app)?,
         &item(app, "edit.find", "Find / Replace…", Some("CmdOrCtrl+F"))?,
         &item(app, "edit.searchWorkspace", "Search in Workspace…", Some("Alt+CmdOrCtrl+F"))?,
-        &sep(app)?,
-        &read_aloud,
     ])?;
     Ok(m)
 }
