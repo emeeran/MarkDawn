@@ -17,13 +17,14 @@ const out = join(root, 'src/assets')
 
 // Languages worth shipping in a markdown editor + their require-chain deps
 // (markup-templating for php, c for cpp, clike for the C-family, json for
-// json5, markup for jsx/markdown).
+// json5, markup for jsx/markdown). latex is preloaded by muya itself at
+// startup for math blocks — removing it breaks app boot (2026-10 regression).
 const KEEP = new Set([
   'markup', 'css', 'clike', 'javascript', 'typescript', 'jsx', 'tsx',
   'json', 'json5', 'yaml', 'toml', 'ini', 'bash', 'python', 'rust', 'go',
   'java', 'c', 'cpp', 'csharp', 'sql', 'xml', 'markdown', 'diff', 'lua',
   'php', 'ruby', 'kotlin', 'swift', 'docker', 'makefile', 'git', 'http',
-  'markup-templating',
+  'markup-templating', 'latex',
 ])
 
 // 1. prism chunks. Entries are `"…/prism-<lang>[.min].js": () => import("…")`
@@ -46,6 +47,20 @@ if (dropped === 0 && js.includes('prism-abap')) {
 }
 writeFileSync(join(lib, 'es/index.js'), js)
 console.log(`trim-muya: dropped ${dropped} prism language mappings`)
+
+// Also trim the language metadata for the same set: `lang in prism.languages`
+// gates the loader, so dropped languages then take the built-in silent
+// no-highlight path instead of rejecting with "Unknown variable dynamic
+// import" (the pre-trim bundle never had a language missing from the map).
+// Every metadata entry carries `owner:` — plugin config objects don't.
+let metaDropped = 0
+js = js.replace(/\n\t\t\t([a-z0-9-]+): \{[^{}]*owner: "[^"]*"[^{}]*\}(,)?/g, (entry, lang) => {
+  if (KEEP.has(lang)) return entry
+  metaDropped++
+  return ''
+})
+writeFileSync(join(lib, 'es/index.js'), js)
+console.log(`trim-muya: dropped ${metaDropped} language metadata entries`)
 
 // 2. woff2-only font css. Per @font-face block: keep just the woff2 source;
 // faces with no woff2 (DejaVu Sans Mono is ttf-only) drop entirely — the
