@@ -18,6 +18,7 @@ import { CommandPalette } from './panels/CommandPalette'
 import { FileTree } from './panels/FileTree'
 import { FindBar } from './panels/FindBar'
 import { Outline } from './panels/Outline'
+import { AboutDialog } from './panels/AboutDialog'
 import { SettingsDialog } from './panels/SettingsDialog'
 import { WorkspaceSearch } from './panels/WorkspaceSearch'
 import { WordCount } from './panels/WordCount'
@@ -71,6 +72,7 @@ export function App() {
   const [toc, setToc] = useState<ITocItem[]>([])
   const [recents, setRecents] = useState<string[]>([])
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [aboutOpen, setAboutOpen] = useState(false)
   const [selUi, setSelUi] = useState<{ text: string; rect: SelectionInfo['rect'] }>({ text: '', rect: null })
   const [diff, setDiff] = useState<DiffRequest | null>(null)
   const selStableTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -130,9 +132,11 @@ export function App() {
       setDiff({ action, extra, range, key: Date.now() })
     }
     const onOpenSettings = () => setSettingsOpen(true)
+    const onOpenAbout = () => setAboutOpen(true)
     const onClearRecents = () => clearRecents()
     window.addEventListener('notepad:transform', onTransform)
     window.addEventListener('notepad:open-settings', onOpenSettings)
+    window.addEventListener('notepad:open-about', onOpenAbout)
     window.addEventListener('notepad:clear-recents', onClearRecents)
     return () => {
       unlisteners.forEach((u) => void u.then((f) => f()).catch(() => {}))
@@ -140,6 +144,7 @@ export function App() {
       unDrop?.()
       window.removeEventListener('notepad:transform', onTransform)
       window.removeEventListener('notepad:open-settings', onOpenSettings)
+    window.removeEventListener('notepad:open-about', onOpenAbout)
       window.removeEventListener('notepad:clear-recents', onClearRecents)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -384,6 +389,7 @@ export function App() {
       {settings.palette && <CommandPalette mode={settings.palette} onClose={() => settings.set('palette', null)} />}
       {settings.workspaceSearchOpen && <WorkspaceSearch onClose={() => settings.set('workspaceSearchOpen', false)} />}
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
+      {aboutOpen && <AboutDialog onClose={() => setAboutOpen(false)} />}
     </div>
   )
 }

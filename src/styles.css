@@ -332,3 +332,18 @@ input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
   .editor-host .mu-editor { padding: 0; max-width: none; }
   @page { margin: 20mm; }
 }
+
+/* ---------- about dialog ---------- */
+.about-dialog { margin-top: 14vh; width: 460px; padding: 20px 22px; }
+.about-head { display: flex; gap: 16px; align-items: center; }
+.about-head img { width: 64px; height: 64px; }
+.about-head h2 { margin: 0 0 4px; font-size: 18px; }
+.about-head a { font-size: 12px; }
+.about-dedication {
+  margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border);
+  display: flex; gap: 16px; align-items: center;
+}
+.about-dedication img {
+  width: 140px; border-radius: 6px; border: 1px solid var(--border);
+}
+.about-dedication p { margin: 0; font-size: 13px; line-height: 1.5; }
