@@ -14,6 +14,9 @@ export interface Tab {
   /** Disk mtime (ms) the content was loaded with — the write_file conflict
    *  guard. null = unguarded (new file, or the user chose "Keep mine"). */
   mtime: number | null
+  /** Plain text mode: raw textarea, no markdown rendering. Auto-on for
+   *  .txt/.log files; View → Plain Text Mode toggles it. Session-only. */
+  plainText?: boolean
 }
 
 export type ProviderId = 'anthropic' | 'openai' | 'groq' | 'ollama'

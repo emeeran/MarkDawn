@@ -185,6 +185,7 @@ fn view_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
     let m = Submenu::new(app, "View", true)?;
     m.append_items(&[
         &item(app, "view.source", "Source Mode", Some("CmdOrCtrl+/"))?,
+        &item(app, "view.mode", "Plain Text Mode", Some("Alt+CmdOrCtrl+M"))?,
         &item(app, "view.focus", "Focus Mode", Some("CmdOrCtrl+Shift+F"))?,
         &item(app, "view.typewriter", "Typewriter Mode", Some("Alt+CmdOrCtrl+T"))?,
         &item(app, "view.ghost", "Ghost Text Autocomplete", Some("Alt+CmdOrCtrl+G"))?,

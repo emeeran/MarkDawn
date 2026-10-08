@@ -269,3 +269,26 @@ describe('self-save echo window', () => {
     expect(t.wasSelfSaveRecently('/ws/a.md')).toBe(false)
   })
 })
+
+describe('plain text mode', () => {
+  it('opens .txt and .log files plain, .md as markdown', async () => {
+    await useTabs.getState().open('/ws/notes.txt')
+    await useTabs.getState().open('/ws/trace.log')
+    await useTabs.getState().open('/ws/doc.md')
+    const tabs = useTabs.getState().tabs
+    expect(tabs.find((t) => t.path === '/ws/notes.txt')?.plainText).toBe(true)
+    expect(tabs.find((t) => t.path === '/ws/trace.log')?.plainText).toBe(true)
+    expect(tabs.find((t) => t.path === '/ws/doc.md')?.plainText).toBeFalsy()
+  })
+
+  it('togglePlainText flips only the active tab', () => {
+    const a = seedTab({ title: 'a.md', path: '/ws/a.md' })
+    seedTab({ title: 'b.txt', path: '/ws/b.txt', plainText: true })
+    useTabs.setState({ activeId: a.id })
+    useTabs.getState().togglePlainText()
+    expect(useTabs.getState().tabs.find((t) => t.id === a.id)?.plainText).toBe(true)
+    expect(useTabs.getState().tabs.find((t) => t.title === 'b.txt')?.plainText).toBe(true)
+    useTabs.getState().togglePlainText()
+    expect(useTabs.getState().activePlain()).toBe(false)
+  })
+})

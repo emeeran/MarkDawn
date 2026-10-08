@@ -21,6 +21,10 @@ interface TabsStore {
   reopenClosed: () => Promise<void>
   setActive: (id: string) => void
   setContent: (id: string, markdown: string) => void
+  /** Toggle the active tab between markdown rendering and raw plain text. */
+  togglePlainText: () => void
+  /** Active tab is in plain-text (raw) view? */
+  activePlain: () => boolean
   markSaved: (id: string, markdown: string, mtime?: number | null) => void
   saveById: (id: string) => Promise<'saved' | 'failed' | 'skipped'>
   saveActive: () => Promise<void>
@@ -94,6 +98,7 @@ export const useTabs = create<TabsStore>((setState, get) => ({
         dirty: false,
         markdown,
         mtime,
+        plainText: /\.(txt|log)$/i.test(path),
       }
       setState((s) => ({ tabs: [...s.tabs, tab], activeId: tab.id, banner: null }))
       void tauri.recentPush(path).catch((e) => console.warn('recent files:', e))
@@ -157,6 +162,17 @@ export const useTabs = create<TabsStore>((setState, get) => ({
     const tab = get().tabs.find((t) => t.id === id)
     const stale = tab?.path ? stalePaths.has(tab.path) : false
     setState({ activeId: id, banner: stale ? 'This file changed on disk.' : null })
+  },
+
+  togglePlainText() {
+    setState((s) => ({
+      tabs: s.tabs.map((t) => (t.id === s.activeId ? { ...t, plainText: !t.plainText } : t)),
+    }))
+  },
+
+  activePlain() {
+    const t = get().tabs.find((x) => x.id === get().activeId)
+    return !!t?.plainText
   },
 
   setContent(id, markdown) {
@@ -234,9 +250,11 @@ export const useTabs = create<TabsStore>((setState, get) => ({
     const id = get().activeId
     const tab = get().tabs.find((t) => t.id === id)
     if (!tab) return false
-    const path = await pickSaveFile(`${tab.title}.md`, [
-      { name: 'Markdown', extensions: ['md'] },
-    ]).catch((e) => {
+    const path = await pickSaveFile(
+      // Don't double-extend files that already carry one (notes.txt → notes.txt.md)
+      /\.[^./\\]+$/.test(tab.title) ? tab.title : `${tab.title}.md`,
+      [{ name: 'Markdown', extensions: ['md'] }],
+    ).catch((e) => {
       useToast.getState().show(`Save as: ${e}`)
       return null
     })

@@ -219,6 +219,7 @@ export function getCommands(): Command[] {
     cmd('view.fontSmaller', 'Smaller text', 'View', () => settings.set('fontSize', Math.max(12, settings.fontSize - 1)), 'zoom out size'),
     cmd('view.fontReset', 'Reset text size', 'View', () => settings.set('fontSize', 16), 'zoom default'),
     cmd('view.source', `${settings.sourceMode ? '✓ ' : ''}Source mode`, 'View', () => settings.set('sourceMode', !settings.sourceMode), 'raw markdown'),
+    cmd('view.mode', 'Plain text mode', 'View', () => useTabs.getState().togglePlainText(), 'no markdown rendering'),
     cmd('view.palette', 'Command palette…', 'View', () => settings.set('palette', 'actions')),
     cmd('view.quickopen', 'Quick open…', 'View', () => settings.set('palette', 'files')),
     ...THEMES.map((t) =>

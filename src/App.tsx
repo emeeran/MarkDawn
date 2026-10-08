@@ -80,6 +80,8 @@ export function App() {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
 
   const activeTab = tabs.find((t) => t.id === activeId) ?? null
+  // Raw textarea view: explicit source mode, or this tab is plain text.
+  const raw = settings.sourceMode || !!activeTab?.plainText
 
   // --- boot: settings, recents, native menu + backend events ---
   useEffect(() => {
@@ -153,7 +155,7 @@ export function App() {
   // --- editor right-click menu (selection actions; plain right-click is untouched) ---
   useEffect(() => {
     const onCtx = (e: MouseEvent) => {
-      if (useSettings.getState().sourceMode || !readDomSelection().text.trim()) {
+      if (useSettings.getState().sourceMode || useTabs.getState().activePlain() || !readDomSelection().text.trim()) {
         setCtxMenu(null)
         return
       }
@@ -331,7 +333,7 @@ export function App() {
           )}
           {settings.findOpen && <FindBar onClose={() => settings.set('findOpen', false)} />}
           {activeTab ? (
-            settings.sourceMode ? (
+            raw ? (
               <textarea
                 className="source-editor"
                 autoFocus
@@ -346,7 +348,7 @@ export function App() {
           ) : (
             <Welcome recents={recents} onClearRecents={clearRecents} />
           )}
-          {selStable && selUi.text && !diff && !settings.sourceMode && (
+          {selStable && selUi.text && !diff && !raw && (
             <SelectionActionBar
               rect={selUi.rect}
               onAction={(action, extra) => {
@@ -355,7 +357,7 @@ export function App() {
               }}
             />
           )}
-          {diff && !settings.sourceMode && (
+          {diff && !raw && (
             <DiffPopover
               key={diff.key}
               request={{ action: diff.action, extra: diff.extra }}

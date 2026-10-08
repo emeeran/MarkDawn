@@ -1,5 +1,6 @@
 import { tauri } from '../lib/tauri'
 import { useSettings } from '../stores/settings'
+import { useTabs } from '../stores/tabs'
 import { useToast } from '../stores/toast'
 
 export type ReadMode = 'doc' | 'sel' | 'cursor'
@@ -40,7 +41,7 @@ function offsetOf(host: HTMLElement, r: Range): number {
 }
 
 function readTarget(mode: ReadMode): ReadTarget | null {
-  if (useSettings.getState().sourceMode) {
+  if (useSettings.getState().sourceMode || useTabs.getState().activePlain()) {
     const ta = document.querySelector<HTMLTextAreaElement>('.source-editor')
     if (!ta) return null
     if (mode === 'doc') return { kind: 'source', ta, text: ta.value, base: 0 }
