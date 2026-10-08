@@ -5,7 +5,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useRef, useState } from 'react'
 import type { ITocItem } from '@muyajs/core'
 import markDawnLogo from './assets/markdawn-logo.png'
-import { captureRange, readDomSelection, setSelection } from './ai/selection'
+import { captureRange, captureTextareaSpan, readDomSelection, readTextareaSelection, setSelection } from './ai/selection'
 import { runSelectionTransform } from './ai/transform'
 import { flushPendingEmit } from './editor/editBridge'
 import { isReading } from './ai/tts'
@@ -35,6 +35,7 @@ interface DiffRequest {
   action: string
   extra?: string
   range: Range | null
+  span: { start: number; end: number; text: string } | null
   key: number
 }
 
@@ -129,9 +130,9 @@ export function App() {
     // DOM CustomEvents from feature modules (NOT tauri IPC events — these must
     // use window listeners; tauri listen() never sees them).
     const onTransform = (e: Event) => {
-      const { action, extra, range } = (e as CustomEvent<{ action: string; extra?: string; range: Range | null }>).detail
+      const { action, extra, range, span } = (e as CustomEvent<{ action: string; extra?: string; range: Range | null; span: { start: number; end: number; text: string } | null }>).detail
       setSelStable(false)
-      setDiff({ action, extra, range, key: Date.now() })
+      setDiff({ action, extra, range, span, key: Date.now() })
     }
     const onOpenSettings = () => setSettingsOpen(true)
     const onOpenAbout = () => setAboutOpen(true)
@@ -155,10 +156,18 @@ export function App() {
   // --- editor right-click menu (selection actions; plain right-click is untouched) ---
   useEffect(() => {
     const onCtx = (e: MouseEvent) => {
-      if (useSettings.getState().sourceMode || useTabs.getState().activePlain() || !readDomSelection().text.trim()) {
+      if (useSettings.getState().sourceMode) {
         setCtxMenu(null)
         return
       }
+      // Plain text mode: the selection lives on the textarea, invisible to
+      // window.getSelection() — read it there and seed the same module state.
+      const sel = readTextareaSelection().text ? readTextareaSelection() : readDomSelection()
+      if (!sel.text.trim()) {
+        setCtxMenu(null)
+        return
+      }
+      setSelection(sel)
       e.preventDefault()
       setCtxMenu({ x: e.clientX, y: e.clientY })
     }
@@ -177,6 +186,14 @@ export function App() {
       window.removeEventListener('keydown', onKey)
     }
   }, [])
+
+  // --- window title: file + dirty dot + editing mode ---
+  useEffect(() => {
+    const name = activeTab ? `${activeTab.dirty ? '● ' : ''}${activeTab.title}` : 'MarkDawn'
+    void getCurrentWindow()
+      .setTitle(`${name} — ${raw ? 'Plain Text' : 'Markdown'}`)
+      .catch(() => {})
+  }, [activeTab?.title, activeTab?.dirty, raw])
 
   // --- theme (auto follows the OS) + typography vars ---
   useEffect(() => {
@@ -341,6 +358,7 @@ export function App() {
                 value={activeTab.markdown}
                 onChange={(e) => { if (activeId) setContent(activeId, e.target.value) }}
                 onKeyDown={(e) => { if (e.key === 'Escape') settings.set('sourceMode', false) }}
+                onSelect={() => { if (!isReading()) onSelection(readTextareaSelection()) }}
               />
             ) : (
               <MuyaEditor key={activeTab.id} tab={activeTab} onInput={onInput} onSelection={onSelection} />
@@ -348,20 +366,21 @@ export function App() {
           ) : (
             <Welcome recents={recents} onClearRecents={clearRecents} />
           )}
-          {selStable && selUi.text && !diff && !raw && (
+          {selStable && selUi.text && !diff && !settings.sourceMode && (
             <SelectionActionBar
               rect={selUi.rect}
               onAction={(action, extra) => {
                 setSelStable(false)
-                setDiff({ action, extra, range: captureRange(), key: Date.now() })
+                setDiff({ action, extra, range: captureRange(), span: captureTextareaSpan(), key: Date.now() })
               }}
             />
           )}
-          {diff && !raw && (
+          {diff && !settings.sourceMode && (
             <DiffPopover
               key={diff.key}
               request={{ action: diff.action, extra: diff.extra }}
               range={diff.range}
+              span={diff.span}
               selRect={selUi.rect}
               onClose={() => setDiff(null)}
             />

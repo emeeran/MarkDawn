@@ -4,7 +4,7 @@ import { wordDiff } from '../ai/diff'
 import { getSelection } from '../ai/selection'
 
 import { BASE_SYSTEM, buildTransformPrompt, featureEnabled, QUICK_ACTIONS } from '../ai/prompts'
-import { replaceSelection } from '../editor/editBridge'
+import { replacePlainSpan, replaceSelection } from '../editor/editBridge'
 import { useSettings } from '../stores/settings'
 import { useToast } from '../stores/toast'
 
@@ -53,11 +53,14 @@ export function SelectionActionBar({ rect, onAction }: { rect: Rect; onAction: (
 export function DiffPopover({
   request,
   range,
+  span,
   selRect,
   onClose,
 }: {
   request: { action: string; extra?: string }
   range: Range | null
+  /** Plain text mode: the exact textarea span the action fired on. */
+  span: { start: number; end: number; text: string } | null
   selRect: Rect
   onClose: () => void
 }) {
@@ -117,9 +120,11 @@ export function DiffPopover({
 
   async function apply() {
     // Replace exactly the span that was selected when the action fired: the
-    // frozen range is re-pinned by the edit bridge before inserting, so a
-    // collapsed or moved live selection can't misplace the edit.
-    const ok = await replaceSelection(result.trim(), range)
+    // frozen range (muya) or guarded span (plain text) is re-pinned before
+    // inserting, so a collapsed or moved live selection can't misplace it.
+    const ok = span
+      ? replacePlainSpan(result.trim(), span)
+      : await replaceSelection(result.trim(), range)
     if (!ok) useToast.getState().show('Could not apply the edit')
     onClose()
   }

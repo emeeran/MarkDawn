@@ -40,6 +40,22 @@ export function captureRange(): Range | null {
   return sel && sel.rangeCount > 0 ? sel.getRangeAt(0).cloneRange() : null
 }
 
+// --- plain text mode: the raw textarea's selection is invisible to
+// window.getSelection(), so it is read off the element instead ---
+
+export function readTextareaSelection(): SelectionInfo {
+  const ta = document.querySelector<HTMLTextAreaElement>('.source-editor')
+  if (!ta || ta.selectionStart === ta.selectionEnd) return { text: '', rect: null }
+  return { text: ta.value.slice(ta.selectionStart, ta.selectionEnd), rect: null }
+}
+
+/** Selection span + the exact text in it, for guarded deferred replaces. */
+export function captureTextareaSpan(): { start: number; end: number; text: string } | null {
+  const ta = document.querySelector<HTMLTextAreaElement>('.source-editor')
+  if (!ta || ta.selectionStart === ta.selectionEnd) return null
+  return { start: ta.selectionStart, end: ta.selectionEnd, text: ta.value.slice(ta.selectionStart, ta.selectionEnd) }
+}
+
 export function restoreRange(range: Range | null): boolean {
   if (!range) return false
   const sel = window.getSelection()

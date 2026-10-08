@@ -252,8 +252,9 @@ input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
   flex: 1; width: 100%; resize: none; border: none; outline: none;
   padding: 56px 60px;
   background: var(--bg); color: var(--fg);
-  font-family: var(--mono);
-  font-size: calc(var(--editor-font-size) * 0.9);
+  /* Notepad-like: the user's editor font at full size, plain wrapped text */
+  font-family: var(--editor-font-family, var(--mono));
+  font-size: var(--editor-font-size);
   line-height: 1.6;
 }
 

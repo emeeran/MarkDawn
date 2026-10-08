@@ -1,4 +1,4 @@
-import { captureRange, getSelection } from './selection'
+import { captureRange, captureTextareaSpan, getSelection } from './selection'
 import { featureEnabled, AI_FEATURES } from './prompts'
 import { useSettings } from '../stores/settings'
 import { useToast } from '../stores/toast'
@@ -22,7 +22,9 @@ export function runSelectionTransform(action: string, extra?: string): boolean {
     return false
   }
   window.dispatchEvent(
-    new CustomEvent('notepad:transform', { detail: { action, extra, range: captureRange() } }),
+    new CustomEvent('notepad:transform', {
+      detail: { action, extra, range: captureRange(), span: captureTextareaSpan() },
+    }),
   )
   return true
 }
