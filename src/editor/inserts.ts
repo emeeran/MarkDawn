@@ -40,7 +40,7 @@ export const PARAGRAPH_ACTIONS: Record<string, () => void> = {
   'para.ol': () => insertLinePrefix('1. '),
   'para.ul': () => insertLinePrefix('- '),
   'para.task': () => insertLinePrefix('- [ ] '),
-  'para.hr': () => insertBlock('\n---\n'),
+  'para.hr': () => insertBlock('\n\n---\n\n'),
   'para.code': () => insertBlock('\n```\n\n```\n'),
   'para.math': () => insertBlock('\n$$\n\n$$\n'),
   'para.table': () =>
