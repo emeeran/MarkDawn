@@ -7,7 +7,7 @@
 //    with the needed fonts/icons copied alongside.
 // muya is pinned exact (see CLAUDE.md), so this is deterministic; if it is
 // ever upgraded, re-verify the keep list covers the require-chains.
-import { readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -81,3 +81,7 @@ css = css.replace(/url\(\.\/assets\/([^)]+)\)/g, (full, rel) => {
 })
 writeFileSync(join(out, 'muya-core.css'), css)
 console.log(`trim-muya: wrote muya-core.css (${(css.length / 1024).toFixed(0)}K) with ${copied.size} assets`)
+
+// The lib content changed but vite's dep-optimizer hash (lockfile+config) did
+// not — a stale prebundle keeps serving dropped imports. Force regeneration.
+rmSync(join(root, 'node_modules/.vite'), { recursive: true, force: true })
