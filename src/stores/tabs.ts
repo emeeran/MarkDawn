@@ -112,23 +112,15 @@ export const useTabs = create<TabsStore>((setState, get) => ({
     const tab = get().tabs.find((t) => t.id === id)
     if (!tab) return
     clearTimer(id)
-    if (tab.dirty) {
-      if (tab.path) {
-        const result = await get().saveById(id)
-        if (result === 'failed') return // save failed — keep the tab open
-      } else {
-        // Never had a path: activate it so Save-As targets THIS tab (a
-        // background tab used to save the active tab's content), then the
-        // user picks a destination — or the close is cancelled.
-        setState({ activeId: id })
-        const saved = await get().saveActiveAs()
-        if (!saved) return
-      }
+    if (tab.dirty && tab.path) {
+      const result = await get().saveById(id)
+      if (result === 'failed') return // save failed — keep the tab open
     }
+    // A dirty tab that never had a path is scratch — closing discards it.
     setState((s) => {
       // Re-read: Save-As may have changed path/title.
       const t = s.tabs.find((t) => t.id === id)
-      const closedTab = t ? { path: t.path, title: t.title, markdown: t.markdown } : null
+      const closedTab = t?.path ? { path: t.path, title: t.title, markdown: t.markdown } : null
       const idx = s.tabs.findIndex((x) => x.id === id)
       const tabs = s.tabs.filter((x) => x.id !== id)
       const activeId =

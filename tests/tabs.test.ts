@@ -123,24 +123,21 @@ describe('close', () => {
     expect(writes).toEqual([{ path: '/ws/ok.md', contents: 'x' }])
   })
 
-  it('background untitled tab close saves THAT tab, not the active one', async () => {
+  it('closing a dirty untitled tab discards it without a save dialog', async () => {
     const active = seedTab({ path: '/ws/active.md', title: 'active.md', markdown: 'active content' })
     const bg = seedTab({ path: null, title: 'untitled', markdown: 'bg draft', dirty: true })
     useTabs.setState({ activeId: active.id })
-    mocks.pickSaveFile.mockResolvedValue('/ws/chosen.md')
     await useTabs.getState().close(bg.id)
-    // The dialog saved the *closing* tab's content — not the active tab's.
-    expect(writes).toEqual([{ path: '/ws/chosen.md', contents: 'bg draft' }])
     expect(useTabs.getState().tabs.some((t) => t.id === bg.id)).toBe(false)
     expect(useTabs.getState().tabs.some((t) => t.id === active.id)).toBe(true)
+    expect(mocks.pickSaveFile).not.toHaveBeenCalled()
+    expect(writes).toEqual([])
   })
 
-  it('cancel on Save-As keeps the dirty untitled tab', async () => {
-    const tab = seedTab({ markdown: 'precious', dirty: true })
-    mocks.pickSaveFile.mockResolvedValue(null)
+  it('a discarded untitled tab does not land in reopen-closed-tab', async () => {
+    const tab = seedTab({ markdown: 'scratch', dirty: true })
     await useTabs.getState().close(tab.id)
-    expect(useTabs.getState().tabs.some((t) => t.id === tab.id)).toBe(true)
-    expect(useTabs.getState().tabs[0].dirty).toBe(true)
+    expect(useTabs.getState().closed).toEqual([])
   })
 })
 
