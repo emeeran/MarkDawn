@@ -114,9 +114,10 @@ contract gap (H6) is pinned, this ships.
   script; a plain `tauri build --bundles deb` (future release CI) ships the
   broken entry. CI never builds the deb at all.
 - [ ] CI gaps: no vite-build/deb artifact step, single-OS only (platform
-  branches in pick.rs/tts.rs never compile elsewhere), no
-  `tauri::generate_handler!` signature validation (only a real build catches
-  a command-arg mismatch), no clippy/fmt/coverage.
+  branches in pick.rs/tts.rs never compile elsewhere), no clippy/fmt/coverage.
+  (An earlier draft claimed `generate_handler!` signature mismatches escape
+  CI — wrong: `cargo test` compiles the macro, so a mismatch fails CI.
+  Corrected per blind review.)
 - [ ] Test gaps on the highest-consequence code: `quitFlow()` (zero tests),
   the `handle_exit_requested` watchdog, `chat.ts` stream-callback plumbing
   (the mock never invokes the callbacks), and the editBridge
@@ -200,6 +201,55 @@ contract gap (H6) is pinned, this ships.
   workspace search, no updater** — pre-existing known ceilings in CLAUDE.md,
   unchanged by this run.
 - **`ponytail:` comment prefixes** — kept deliberately (owner's call, 2026-10-18).
+
+## Missed by pipeline, caught by blind review
+
+The context-blind reviewer (`.pipeline/blind-review.md`, sanitized dispatch)
+independently re-derived the blocker and most highs before encountering
+`AUDIT.md`, and verified this audit's claims against the code. Findings below
+appear in no Phase-4 dimension — genuine misses, logged as such:
+
+- [ ] **`src-tauri/src/tts.rs:187-287` (escalates the TTS high):** the killed
+  synth task's `*s = None` also makes the *survivor's* poll loop see an empty
+  slot and return `"stopped"` — so with DEPTH=3 prefetch (the only mode),
+  read-aloud aborts after roughly one chunk. Worse than the Ok-with-missing-
+  mp3 form the Phase-4 pass caught.
+- [ ] **`src-tauri/src/fs.rs:28-51` (high):** `atomic_write` fsyncs the temp
+  file but never fsyncs the *directory* after `rename` — the rename itself is
+  not durable across power loss on ext4. The comment claims the empty-rename
+  hole is closed; it is half-closed. Two lines to fix.
+- [ ] **`src/editor/muyaSetup.ts:23-26` (medium):** the image picker uses
+  plugin-dialog (rfd) directly — the exact dependency `pick.rs` documents as
+  hanging on some Linux setups. The one picker that skips the zenity path is
+  on the machines that motivated the workaround.
+- [ ] **`src/lib/tauri.ts:35-51` vs `src-tauri/src/pick.rs` (medium):** picker
+  `filters` are accepted and forwarded by the TS wrapper but ignored by the
+  zenity/kdialog commands — the primary path can open/save any file type.
+- [ ] **`src/panels/FileTree.tsx:97-104` (medium):** delete has no
+  confirmation and trashes whole directories recursively, with no check for
+  open tabs (trash keeps it recoverable; a mis-click is one event away).
+- [ ] **`src/App.tsx:369` (medium):** `MuyaEditor` is keyed by `tab.id`, so
+  every tab switch destroys and recreates Muya — undo history does not
+  survive tab switches; module-level `emitTimer`/`typeTimer` encode a
+  single-editor assumption that makes this fragile.
+- [ ] **`src/editor/MuyaEditor.tsx:143-183` (low):** pasted *text* that looks
+  like an image path (`/tmp/photo.png`) is hijacked into a file import
+  instead of pasting as text.
+- [ ] **Repo hygiene (low):** `CLAUDE.md:6` says "Live at v0.2.0" while every
+  manifest is at 0.3.0; empty `docs/` dir left by phase 1; `notepad:*` event
+  names, `notepad-tts-` temp prefixes, keyring service name and comments
+  still carry the pre-rename product name; `releases/` holds an old deb.
+- **Corroborated (higher confidence):** B1, the autosave mtime poisoning, the
+  recovery swallow, `export_pandoc` FsGuard bypass, single-file→parent-dir
+  grant, HTML export clobber+injection, the `mtime-conflict` string contract,
+  watcher silence, CSP dev allowances, stale deb md5sums — found independently
+  by both passes.
+- **Open question for the owner:** severity of the `fs_allow` advisory-guard
+  finding. This audit rates it medium (defense-in-depth against an already
+  sandboxed renderer); the blind reviewer argues high because the FsGuard
+  comment oversells the guarantee it actually provides. Either way the fix
+  (move allow calls behind the picker commands, or fix the comment) is the
+  same; only the priority differs.
 
 ## What the audits verified clean
 
