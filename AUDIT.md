@@ -1,122 +1,211 @@
-# Production Readiness Audit — 2026-09-14
+# Production Readiness Audit — 2026-10-18
 
-> Historical snapshot taken before the hardening pass. The CSP, asset-protocol
-> scope, FsGuard confinement, flush-on-quit, tabs-store test, and CI blockers
-> listed below have since been fixed (see `README.md` / `CLAUDE.md`); the
-> unchecked boxes do not reflect the current tree.
+> Supersedes the 2026-09-14 audit (archived with this run in
+> `.pipeline/archive/2026-09-run/`). That audit's blockers (CSP, asset scope,
+> FsGuard confinement, flush-on-quit, tabs-store tests, CI) were fixed; this
+> run re-audited the tree after the cleanup pipeline (phases 0–3).
 
-Scope: full repo review by six independent audit passes (correctness/error-handling, security,
-config/environment, observability, testing/CI, operational readiness). Findings merged and
-deduplicated; severity is the highest assigned by any pass.
+Scope: full repo review by six independent audit passes (correctness/error-handling,
+security, config/environment, observability, testing/CI, operational readiness).
+Findings merged and deduplicated; severity is the highest assigned by any pass.
+All findings verified in surrounding code by the auditing pass.
 
 ## Summary
 
-**Not ready for distribution to other users; acceptable for the author's own machine today.**
-The app is functional and its data-durability core is solid (atomic document writes, keychain-only
-secrets, no injection surface in subprocess usage, sanitized chat rendering). The blockers are
-(1) a hardening trio — no CSP, unrestricted asset-protocol scope, and unconfined fs commands —
-that turns any future sanitizer escape into arbitrary filesystem access, and (2) two silent
-data-loss paths (no flush-on-quit after debounced saves; closing a dirty tab proceeds even when
-its save fails). Neither blocks the author's daily use; both must be fixed before shipping.
+**Ready with fixes.** The durability and security core is genuinely solid:
+atomic writes with fsync, keychain-only secrets (verified end to end — no key
+ever reaches settings.json or the frontend), array-built subprocess argv
+everywhere, a linear-time regex engine behind hard caps, DOMPurify-sanitized
+chat/editor rendering under a `script-src 'self'` CSP, and corrupt-store
+preservation. What is not solid is the **quit path**: the force-exit watchdog
+can destroy the very buffers flush-on-quit exists to protect (B1), and two
+adjacent failures swallow recovery errors (H1). All three are small, targeted
+fixes in `lifecycle.rs` / `App.tsx` / `tabs.ts`. After those land and the test
+contract gap (H6) is pinned, this ships.
 
-## Blockers (must fix before prod)
+## Blockers (must fix before distribution)
 
-- [ ] `src-tauri/tauri.conf.json:23` — `csp: null` — no Content-Security-Policy; DOMPurify inside muya is the only barrier between untrusted markdown and full IPC access (flagged by security + correctness independently)
-- [ ] `src-tauri/tauri.conf.json:26` — `assetProtocol.scope: ["**"]` — webview can fetch any file on disk via `asset://`; reachable from untrusted `.md` image srcs via `MuyaEditor.tsx:85-94`
-- [ ] `src-tauri/src/fs.rs:47-97` — `read_file`/`write_file`/`rename`/`trash_path`/… accept raw webview paths with no workspace confinement; `path_join` allows `../` traversal (cross-confirmed by security + correctness)
-- [ ] `src-tauri/src/lib.rs:12-73` + `src/stores/tabs.ts:87-88` — no graceful shutdown: debounced saves (80 ms + 500 ms) are never flushed on quit; quitting ≤580 ms after typing silently discards edits
-- [ ] `src/stores/tabs.ts:59-72, 98, 100-101` — closing a dirty tab saves-then-closes even when the save failed or Save-As was cancelled (data loss); `saveById` on an untitled background tab saves the *active* tab's content to the wrong file; `markSaved` reverts in-flight edits
+- [ ] `src-tauri/src/lifecycle.rs:53-63` + `src/App.tsx:62-72` — **the quit
+  watchdog defeats the refuse-to-exit guard.** When `flushAll()` reports
+  failures, `quitFlow` shows "Not quitting — save failed" and deliberately
+  never calls `quit_now`. But the only thing that disarms the 3 s force-exit
+  watchdog is `quit_now` — so a still-armed watchdog calls `exit(1)` three
+  seconds later, killing the app with the unsaved buffers the toast claimed
+  were protected. Same path when `quitNow` itself rejects. Fix: a `disarm`
+  command (or disarm-before-emit, re-arm inside `quit_now`).
 
 ## High priority
 
-- [ ] `src-tauri/src/tts.rs:133-138, 174-188` — TTS/audio child processes survive app exit (no `kill_on_drop`, no shutdown kill)
-- [ ] `src-tauri/src/ai_proxy.rs:77-81` — AbortMap entries never removed on natural completion (leak); insert-after-spawn races immediate cancels
-- [ ] No CI exists — nothing runs vitest/cargo tests or blocks merge; `npm test` alone skips `tsc` and all Rust tests
-- [ ] `src/stores/tabs.ts` (whole store) — the data-loss surface (dirty tracking, autosave debounce, close flow) has zero tests
-- [ ] `src-tauri/src/ai_proxy.rs:310, 361, 399` — `from_utf8_lossy` per network chunk corrupts multi-byte chars split across chunks (CJK/emoji completions mojibake)
-- [ ] Zero logging/tracing anywhere + no React error boundary — production failures are undiagnosable after a 4 s toast; release builds also discard stderr (`main.rs:1`)
+- [ ] `src/stores/tabs.ts:338-344` — the last-resort recovery write for a
+  dirty **untitled** tab is `catch {}`-swallowed and never pushed into
+  `failed`, so quit proceeds and the only copy of that text dies even though
+  the named-tab path would have refused to exit. Push into `failed`.
+- [ ] `src/stores/tabs.ts:196-206` — typing during an in-flight autosave makes
+  `markSaved` skip the mtime update (guard: content changed during the await).
+  Disk now carries our own write's mtime; the tab still holds the pre-save
+  one — the next autosave fails `check_mtime` against **our own write**, a
+  false "mtime-conflict", and the autosave chain halts until manual reload.
+  Every keystroke-during-save reproduces it.
+- [ ] `src-tauri/src/tts.rs:201-287` vs `src/ai/tts.ts:181-186` — the synth
+  slot is overwritten by the next request, so a killed synth task polls the
+  *survivor's* child, sees success, and resolves Ok with its own mp3 path —
+  a file edge-tts was killed before writing. With DEPTH=3 prefetch, chunks
+  resolve to missing files and read-aloud aborts mid-document.
+- [ ] `src-tauri/src/fs.rs:369-391` — untitled-tab recovery is write-only:
+  nothing lists or offers `app_data/recovery/` back on launch. The user must
+  know the path from the manual. Add a launch-time scan + prompt (and then
+  prune: L5).
+- [ ] `src-tauri/src/fs.rs:241` vs `src/stores/tabs.ts:219` — the
+  silent-clobber protection hangs on the literal error-string prefix
+  `mtime-conflict`, but the tests fabricate that string on both sides
+  (`tests/tabs.test.ts:177,202`), so a rename on either side kills the data-loss
+  guard with the whole suite green. Pin the contract: a Rust test asserting
+  the prefix + a shared constant in the TS matcher.
 
 ## Medium priority
 
-- [ ] `src-tauri/src/ai_proxy.rs:98-99, 145-146, 380` — frontend-supplied `ollama_url` used as fetch base with no host/scheme allowlist (SSRF/exfil channel)
-- [ ] `src-tauri/src/tts.rs:121-127` — document text written to predictable 0644 `/tmp/notepad-tts-*.txt`, symlink-following, never cleaned up
-- [ ] `src-tauri/src/ai_proxy.rs:166-185` — anthropic `list_models` ignores HTTP status (401/5xx → silent empty list)
-- [ ] `src/panels/FileTree.tsx:21-35, 77-89` — no filename validation; `../` escapes workspace, rename silently replaces existing files
-- [ ] `src-tauri/src/export.rs:34-46` — pandoc export silently overwrites an existing destination
-- [ ] `src/ai/diff.ts:16` + `TransformPopover.tsx:96` — wordDiff recomputed per streamed delta with unbounded O(n·m) allocation
-- [ ] `src/panels/TransformPopover.tsx:61, 70-90` — `original` captured at mount but applied to the *current* selection; cancel leaves the card stuck on "Working…"
-- [ ] `src/lib/tauri.ts:12-18` — `cmdWithChannel` has no timeout/panic handling; `tabs.close()` awaits it and can stall
-- [ ] `src-tauri/src/secrets.rs:30-39` + `SettingsDialog.tsx:22-37` — blocking keyring queries on the main thread; key ops have no catch (locked keychain = silent no-op)
-- [ ] `src/stores/workspace.ts:23` + `src-tauri/src/fs.rs:109-114` — watcher failures swallowed, never retried; notify errors indistinguishable from quiet dirs
-- [ ] `src-tauri/src/fs.rs:176-187` — `recent_push` is a non-atomic read-modify-write (crash truncates recents)
-- [ ] `src/stores/chat.ts:18-20` + `fs.rs:212-215` — chat history persist is fail-silent; corrupt file silently reset then overwritten
-- [ ] `src/panels/SettingsDialog.tsx` — secret errors surface via inconsistent blocking `alert()`
-- [ ] Testing environment: `vitest.config.ts` is node-only; React/store layers 0% by construction; SSE parsers hand-rolled and untested
-- [ ] No auto-update path (updater plugin absent; acknowledged in README)
-- [ ] `src/panels/TransformPopover.tsx` + `src/stores/chat.ts:47-52` — post-cancel deltas can land on the next stream's bubble; Error-then-Done ordering fires `onDone` with error text
+**Data & correctness**
+- [ ] `src-tauri/src/export.rs:39-52` — `export_pandoc` never calls
+  `guard.check(&src)`; every other file command does. A compromised webview
+  (or frontend regression) can point pandoc at any path. Also: pandoc's write
+  is not atomic (no `atomic_write`, partial output on failure).
+- [ ] `src/commands/registry.ts:87-92` — HTML export probes existence via
+  `readFile` *before* `fsAllow`, so an existing out-of-scope destination is
+  "absent" and the later `writeFile(..., null)` clobbers it unconditionally.
+- [ ] `src/panels/FileTree.tsx:82-98` — renaming/moving a file open in a tab
+  desyncs the tab path; the next autosave recreates the stale file through
+  `atomic_write` (two divergent copies).
+- [ ] `src-tauri/src/lifecycle.rs:56-62` — the 3 s watchdog deadline is fixed;
+  a many-tab flush on slow storage can be killed mid-flush (distinguish
+  "webview dead" from "still flushing").
+- [ ] `src/stores/tabs.ts:124-138` — closing a dirty untitled tab discards it
+  silently (no confirm, no recovery write) — inconsistent with the quit path.
+- [ ] `src/stores/workspace.ts:24` + `src-tauri/src/fs.rs:719-725` — watcher
+  failure to start is toasted-never, and runtime `Err` events from notify are
+  dropped: the app can silently stop detecting external edits.
+- [ ] `src/App.tsx:44-48` — "Reload from disk" fails silently (catch-{}); the
+  banner is cleared before the reload resolves.
+
+**Security / confinement**
+- [ ] `src-tauri/src/fs.rs:139-145` — allowing one *file* recursively grants
+  its whole parent directory (fs + asset scopes): dropping one image from
+  `~/Downloads` exposes the entire tree. Grant file + `<doc>_assets` only.
+- [ ] `src/commands/registry.ts:69,73` — HTML export interpolates TOC entries
+  and `<title>` unescaped into the exported file (body is DOMPurify'd; these
+  two are not). A heading like `<img src=x onerror=…>` executes in the
+  *recipient's* browser. HTML-escape both.
+- [ ] `src-tauri/src/fs.rs:127-147` — `fs_allow` is webview-callable with any
+  path, making FsGuard advisory against a compromised renderer (it stops
+  accidents, not attacks). Worth a comment/decision; hardening = moving the
+  allow calls behind the picker commands.
+- [ ] `src-tauri/src/tts.rs:211-214` — TTS temp files: predictable
+  `{epoch_ms}-{pid}` names, `fs::write` (follows symlinks, not exclusive),
+  0644 in shared `/tmp` — document text readable by other local users. Use
+  `OpenOptions` `create_new(true)` + `0600`, or a per-process temp subdir.
+- [ ] `src-tauri/tauri.conf.json:25` — `connect-src ws://localhost:* http://localhost:*`
+  are dev-server allowances shipped to prod; they re-open at the CSP layer
+  what the Ollama SSRF guard closes in Rust. Drop for prod builds.
+
+**Packaging / CI**
+- [ ] `scripts/fix-deb-desktop.sh:30-34` — repacks `data.tar.gz` only; the
+  desktop file no longer matches `md5sums` in `control.tar.gz` → `dpkg --verify`
+  fails on every installed machine. Recompute md5sums too.
+- [ ] `package.json:10` — the `%f` desktop-entry fix lives only in this
+  script; a plain `tauri build --bundles deb` (future release CI) ships the
+  broken entry. CI never builds the deb at all.
+- [ ] CI gaps: no vite-build/deb artifact step, single-OS only (platform
+  branches in pick.rs/tts.rs never compile elsewhere), no
+  `tauri::generate_handler!` signature validation (only a real build catches
+  a command-arg mismatch), no clippy/fmt/coverage.
+- [ ] Test gaps on the highest-consequence code: `quitFlow()` (zero tests),
+  the `handle_exit_requested` watchdog, `chat.ts` stream-callback plumbing
+  (the mock never invokes the callbacks), and the editBridge
+  flush-before-destructive-action ordering (a deleted `flushPendingEmit()`
+  call in `close()` would pass the whole suite while losing the last 80 ms
+  of typing on every close).
+- [ ] `src/stores/chat.ts:23` + `src/commands/registry.ts:164` — chat-history
+  persistence and editor clipboard-write failures are console-only (invisible
+  in a packaged app).
 
 ## Low priority
 
-- `pick.rs:52-58` / `tts.rs:132-134` — argv flag-injection via `-`-prefixed `default_name`/`voice`
-- `capabilities/default.json:6-12` — broader than needed (`core:default`, unscooped opener perms)
-- `chat-history.json` / `settings.json` persisted unencrypted (contents include document text)
-- `SettingsDialog.tsx:166-171` — key input lacks `autocomplete="new-password"`
-- `tts.rs:105-119` — duplicated trim/cap/stop block (refactor leftover; benign at runtime)
-- `fs.rs:134` — `.tmp` substring filter drops legitimate `*.tmpl` paths
-- `fs.rs:169-172, 207-215` — corrupt config JSON silently reset to empty
-- `ghostText.ts:24-29` — `attachGhostText` not idempotent (listener leak on attach-without-detach)
-- `ghostText.ts:98-110` — Tab capture is document-wide; Tab in chat textarea inserts ghost text into the editor
-- `editBridge.ts:55-58` — 50 ms sleep decides paste-vs-fallback on large docs
-- `e2e/smoke.spec.ts` — dead test importing uninstalled playwright packages (false confidence)
-- `README.md:79` — test count drifted (says 15, suite is 13)
-- `Cargo.toml:6` — `rust-version = "1.77"` below the resolved 1.77.2 MSRV of tauri 2.11.5
-- App version duplicated in 3 files with no bump automation
-- `ai_proxy.rs:44` + `types.ts:80` — Ollama default URL duplicated across languages
+- `src/ai/diff.ts:16` — wordDiff LCS is O(n·m) memory; a 10 k-word expand
+  ≈ 400 MB and a renderer crash (documented; crash-not-slowness is the issue).
+- `src-tauri/src/fs.rs:1015-1037` — workspace search follows file symlinks
+  outside the allowed root into hit lines (adjacent to the documented
+  symlink ceiling).
+- `src/editor/imageMap.ts:23-31,101-113` — LRU-evicted image cache means
+  `stripImageDataUrls` can no longer reverse, and autosave persists
+  multi-MB base64 blobs into the user's markdown.
+- `src/editor/MuyaEditor.tsx:287-298` — external-content sync has an async
+  gap where a `flushNow` can bounce stale content over newer store state.
+- `src/stores/chat.ts:83-93` — stream errors replace accumulated partial
+  output with `⚠ message` (deltas already received are destroyed).
+- `src/panels/WorkspaceSearch.tsx:31-55` — stale search responses can
+  overwrite newer ones (last-resolved wins).
+- `src-tauri/src/ai_proxy.rs:126-139` — `ai_cancel` landing between
+  `cancelled.remove` and `active.insert` aborts nothing (stream runs on).
+- `src-tauri/src/lib.rs:94-100` — exit-time TTS cleanup routes through
+  `get_webview_window("main")`; use `app.state::<TtsState>()` directly
+  (window may already be destroyed → orphaned edge-tts/mpv).
+- `src-tauri/src/lib.rs:15-25` — single-instance file args arriving during
+  first-launch init are silently dropped (no queueing).
+- `src-tauri/src/tts.rs:294-325,363-381` — xdg-open playback isn't a child:
+  audio keeps playing after quit; janitor runs only from `tts_synth`.
+- `src-tauri/src/fs.rs:796-801` — `recent_push` silently resets a corrupt
+  recents file instead of using `read_json_preserving_corrupt` (two policies,
+  one file). Flagged in phase 2, left alone (behavior change).
+- `src-tauri/src/fs.rs` clipboard/image/tts probes leak one thread on timeout
+  (documented, unbounded only pathologically).
+- `src-tauri/src/ai_proxy.rs:86` — Ollama allowlist includes `169.254.*`
+  (cloud-metadata range on VM hosts); everything else about the validator
+  is solid.
+- `src-tauri/tauri.conf.json:39` — `bundle.targets: "all"` for a deb-only
+  project; a bare `tauri build` will fetch linuxdeploy from the network.
+- `src-tauri/tauri.conf.json:28-31` — assetProtocol enabled with empty scope
+  and the CSP's `asset:` entries are dead config (rendering goes through
+  data URLs); `img-src https:` permits remote-image beacons from opened docs.
+- `tauri.conf.json:4` — generic identifier `app.notepad.editor` (deliberate,
+  but renaming later costs a config migration).
+- `package.json:15` — `@muyajs/core: "^0.2.0"` while CLAUDE.md says "pinned
+  exact"; make both true with `"0.2.0"` (or fix the doc).
+- `src/stores/settings.ts` — no schema version; evolution currently relies on
+  per-key merges + ad-hoc regex migrations.
+- `tests/settings.test.ts:32` — direct singleton assignment instead of
+  `vi.mocked`; works, fragile.
+- `tests/tabs.test.ts:24` — constant mtime mock can't catch a swapped-argument
+  bug in `markSaved` forwarding.
+- `src-tauri/src/fs.rs:1171` — 5 ms sleep + `assert_ne!` on mtimes: flaky on
+  coarse-mtime filesystems (FAT/tmpfs edge).
+- CI merge-blocking depends on branch protection settings (not verifiable
+  from the tree).
 
 ## Explicitly out of scope / accepted risk
 
-- Bundling pandoc/edge-tts: detect-and-use is a deliberate v1 decision (README "Known ceilings")
-- No auto-updater until a release server and signing keys exist
-- Ghost text default-off; sends keystrokes to the configured provider only when enabled
-- `wordDiff` O(n·m) LCS — acceptable for selection-sized inputs; documented ceiling
-- `execCommand('insertText')` + synthetic paste for editor writes — deprecated-but-universal; revisit if WebKit drops them
-- zenity/kdialog as primary pickers — deliberate replacement for broken-on-this-box rfd; plugin-dialog remains the cross-platform fallback
-- Upstream `@muyajs/core` API churn risk — pinned at 0.2.0 by choice
+- **Symlinks appearing after FsGuard allowance are not re-validated**
+  (`fs.rs` `canonicalize_best_effort` ponytail comment) — documented ceiling;
+  re-canonicalize if the threat model changes.
+- **`execCommand`/synthetic-paste inline edits** — deprecated-but-universal;
+  revisit only if WebKit drops it.
+- **Asset-protocol path vestigial** (Rust scope grants + `protocol-asset`
+  feature for a renderer that uses data URLs) — flagged in phase 2; removal
+  deferred until a Linux runtime pass confirms nothing consumes `asset://`.
+- **Ephemeral UI state (find/palette flags) persisted to settings.json** —
+  removal is a UX behavior change; current behavior is harmless.
+- **`src/ai/tts.ts:203`** — stop-vs-failure classified by error-string match;
+  token-flag refactor deferred (behavior-adjacent).
+- **`window.onerror`/`unhandledrejection` toast everything** — deliberate
+  diagnostic surface, not bloat.
+- **Inline AI edits via execCommand, literal-substring fallback in
+  workspace search, no updater** — pre-existing known ceilings in CLAUDE.md,
+  unchanged by this run.
+- **`ponytail:` comment prefixes** — kept deliberately (owner's call, 2026-10-18).
 
-## Positives (verified by the audit passes)
+## What the audits verified clean
 
-- Secrets: keychain-only, `read_key` is `pub(crate)` (never a command), provider allowlist, frontend never sees keys; all provider HTTP in Rust
-- No command injection: every subprocess uses argv arrays, no shell; pandoc format allowlisted
-- No hardcoded secrets; `dangerouslySetInnerHTML` sink is DOMPurify-sanitized by default (verified in the shipped bundle)
-- `atomic_write` (temp + rename) for documents/settings with tests covering contents and temp-litter
-- MuyaEditor teardown, watcher collector exit, and chat cancel state reset are all correct
-
-## Missed by pipeline, caught by blind review
-
-A sanitized cold-review pass (see `.pipeline/blind-review.md`) independently verified AUDIT.md's
-claims — all reproduce — and found the following genuine misses. Logged here as pipeline misses,
-not quietly patched:
-
-- **`src/stores/tabs.ts:22, 87-88` — one module-level autosave timer shared by every tab.** Typing in tab B within 500 ms cancels tab A's pending write; A stays unsaved until re-edited. Compounds every debounce/data-loss issue above. (High)
-- **`src/App.tsx:140-148` — external-change detection covers only the active tab.** Background tabs stay silently stale; their next autosave clobbers the newer file on disk. (High)
-- **`src-tauri/src/lib.rs:18` — cold-start file args ignored.** `notepad foo.md` works only as a second-instance event; first launch drops the argument. (Medium)
-- **`src-tauri/src/ai_proxy.rs:266-268` — a Groq-specific model recommendation hardcoded in the generic `post_stream` error path**, so it fires for every provider. (Medium)
-- **Cross-language rule drift**: `is_chat_model` (`ai_proxy.rs:219-224`) vs the migration regex (`settings.ts:22-24`) implement the same filter with different term lists; Ollama default URL also duplicated (`types.ts:80` / `ai_proxy.rs:43-45`). (Medium)
-- **`ai_proxy.rs:96-124` vs `144-162`** — Ollama model-listing body copy-pasted between command and helper. (Low)
-- **Pointless dynamic imports of statically imported modules** (`ChatPanel.tsx:31`, `registry.ts:128,131-134`, `CommandPalette.tsx:84`); `useWorkspaceOpen` (`CommandPalette.tsx:83`) named like a React hook; dead no-op `onClick` (`ChatPanel.tsx:75`). (Low)
-- **`e2e/smoke.spec.ts` is worse than dead** — it imports `{ t }` from `@playwright/test` and drives a Tauri app via Playwright's *Electron* launcher; pure false confidence. (Low, but upgrade the AUDIT wording)
-- **README drift is bigger than the test count**: also overclaims find features (case / whole-word not exposed by `FindBar.tsx:21`) and omits the Groq provider. (Low)
-- **Repo hygiene**: `.pipeline/`, `trash2review/`, `AUDIT.md`, `PLAN.md` are committed process scaffolding, not product. (Low)
-
-**Cross-confirmed (audit + blind review agree — higher confidence):** the tabs.close()/data-loss
-trio, no-flush-on-quit, `markSaved` race, the CSP/asset/fs-confinement trio, abort-map leak,
-per-chunk UTF-8 lossy decode, `ollama_url` SSRF, TTS temp files + surviving children, anthropic
-list_models status, FileTree filename validation, tts.rs duplicated block, dead e2e, no CI,
-key-ops without catch.
-
-**Open questions for the human (not silently resolved):**
-- Keep `PLAN.md` and the pipeline scaffolding (`.pipeline/`, `trash2review/`, `AUDIT.md`) in the
-  repo, or move to `trash2review` before any distribution build? Blind review flags them as
-  shipped-with-product; they were kept deliberately as project history.
-- e2e/smoke.spec.ts: finish it properly (tauri-driver + WebDriver) or move it to `trash2review`
-  until someone commits to running it?
+Secrets handling end-to-end (keychain-only, never in IPC/logs),
+subprocess argv construction (11 sites, no shell), path traversal guards,
+regex DoS (linear-time crate + hard caps), chat/editor sanitization under
+CSP, atomic writes + conflict guard + corrupt-store preservation, SSE/NDJSON
+parsing incl. hostile-input tests, freeze protection (off-thread + timeouts
+on every external process), no debug residue, no panics on command paths.
