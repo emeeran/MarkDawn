@@ -1,0 +1,4 @@
+# Optional runtime dependency for Read Aloud (src-tauri/src/tts.rs).
+# On PEP 668 systems (Debian/Ubuntu, Python 3.12+) plain `pip install` is
+# refused — use pipx, or: pip install --user --break-system-packages -r requirements.txt
+edge-tts==7.2.8

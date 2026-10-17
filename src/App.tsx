@@ -322,6 +322,10 @@ export function App() {
                 <button className="sidebar-fold" title="Fold sidebar (⌘⇧L)" onClick={() => settings.set('sidebarOpen', false)}>«</button>
               </div>
               {settings.sidebarTab === 'files' ? <FileTree /> : <Outline toc={toc} />}
+              {/* Same label as the title bar (App startReading setTitle). */}
+              <div className="sidebar-mode" title="Editing mode of the active tab — toggle in View menu (Ctrl+Shift+P)">
+                {raw ? 'Plain Text' : 'Markdown'}
+              </div>
             </div>
             <div
               className="sidebar-resize"

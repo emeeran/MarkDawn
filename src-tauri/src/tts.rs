@@ -21,6 +21,30 @@ pub fn tts_state() -> TtsState {
     TtsState { synth: Mutex::new(None), player: Mutex::new(None) }
 }
 
+/// Desktop sessions inherit PATH from the systemd user environment, which
+/// typically omits `~/.local/bin` — where pip installs edge-tts. Dev shells
+/// have it, the installed app doesn't. Search PATH, then the pip default.
+fn edge_tts_candidates() -> Vec<std::path::PathBuf> {
+    let mut dirs: Vec<std::path::PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
+    if let Some(home) = std::env::var_os("HOME") {
+        dirs.push(std::path::PathBuf::from(home).join(".local").join("bin"));
+    }
+    dirs.into_iter().map(|d| d.join("edge-tts")).collect()
+}
+
+/// Resolved per spawn (cheap stats): picking up an edge-tts installed after
+/// app launch must not require a restart.
+fn edge_tts_path() -> std::path::PathBuf {
+    edge_tts_candidates()
+        .into_iter()
+        .find(|p| p.is_file())
+        // Not found anywhere: fall back to the bare name so spawn fails with
+        // the existing "edge-tts not found" error path.
+        .unwrap_or_else(|| std::path::PathBuf::from("edge-tts"))
+}
+
 /// Kill any synth/player children. Called from Stop and from app exit
 /// (children used to survive the app).
 pub fn shutdown(state: &TtsState) {
@@ -35,7 +59,7 @@ pub fn tts_available() -> bool {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         tx.send(
-            std::process::Command::new("edge-tts")
+            std::process::Command::new(edge_tts_path())
                 .arg("--help")
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
@@ -52,7 +76,7 @@ pub fn tts_available() -> bool {
 pub fn tts_voices(on_result: Channel<Cmd<Vec<String>>>) {
     tauri::async_runtime::spawn(async move {
         let out = (async {
-            let proc_out = tokio::process::Command::new("edge-tts")
+            let proc_out = tokio::process::Command::new(edge_tts_path())
                 .arg("--list-voices")
                 .output()
                 .await
@@ -191,7 +215,7 @@ async fn synth_inner(
     let txt2 = txt.clone();
     let mp32 = mp3.clone();
     let voice = voice.unwrap_or_else(|| "en-US-AriaNeural".into());
-    let mut cmd = tokio::process::Command::new("edge-tts");
+    let mut cmd = tokio::process::Command::new(edge_tts_path());
     cmd.arg("--file").arg(&txt2)
         .arg("--voice").arg(&voice)
         .arg("--write-media").arg(&mp32);
@@ -316,7 +340,9 @@ async fn play_inner(mp3: &std::path::Path, state: &TtsState) -> Result<String, S
                         },
                     }
                 }
-                tokio::time::sleep(Duration::from_millis(150)).await;
+                // Fast poll: this is dead air between sentences — mpv exits
+                // right after the last sample, so every ms here is silence.
+                tokio::time::sleep(Duration::from_millis(40)).await;
             }
         }
         None => {
@@ -348,7 +374,16 @@ fn cleanup_old_temp_files() {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_app_synth, valid_tts_param};
+    use super::{edge_tts_candidates, is_app_synth, valid_tts_param};
+
+    #[test]
+    fn tts_candidates_include_pip_user_dir() {
+        // The desktop-session PATH omits ~/.local/bin; the pip fallback must
+        // always be in the search list or installed-app read-aloud breaks.
+        let home = std::env::var_os("HOME").expect("HOME set in test env");
+        let expected = std::path::PathBuf::from(home).join(".local/bin/edge-tts");
+        assert!(edge_tts_candidates().contains(&expected));
+    }
 
     #[test]
     fn tts_param_validation() {

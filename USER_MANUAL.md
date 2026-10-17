@@ -431,7 +431,9 @@ Export items have no shortcuts — use the menu or ⌘K.
 **Export shows "pandoc not found"** — install pandoc and make sure it's on
 PATH, then retry. It's detected at each use.
 
-**Read aloud does nothing** — install edge-tts (`pip install edge-tts`).
+**Read aloud does nothing** — install edge-tts (`pip install edge-tts`; on
+Debian/Ubuntu with Python 3.12+ use `pip install --user --break-system-packages
+edge-tts` or pipx — see `requirements.txt`).
 Check Settings ▸ Read aloud for the detected voice list; an empty list means
 the synth subprocess failed.
 

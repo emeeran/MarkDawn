@@ -71,6 +71,10 @@ input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
 .sidebar-tabs button.on { color: var(--accent); box-shadow: inset 0 -2px var(--accent); font-weight: 600; }
 .sidebar-tabs .sidebar-fold { flex: 0 0 28px; }
 .sidebar-tabs .sidebar-fold:hover { color: var(--fg); }
+.sidebar-mode {
+  margin-top: auto; padding: 5px 10px; border-top: 1px solid var(--border);
+  color: var(--muted); font-size: 11px; user-select: none;
+}
 
 /* draggable fold handle between sidebar and editor */
 .sidebar-resize {

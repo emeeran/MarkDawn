@@ -20,8 +20,8 @@ npm run tauri build      # signed-ish release bundle for your OS
 
 Optional: [pandoc](https://pandoc.org) on PATH enables Word/LaTeX/RTF/ODT/EPUB export
 (auto-detected). [Ollama](https://ollama.com) on `localhost:11434` gives zero-config
-local AI. [edge-tts](https://pypi.org/project/edge-tts/) (`pip install edge-tts`)
-enables read-aloud.
+local AI. [edge-tts](https://pypi.org/project/edge-tts/) — `pip install -r
+requirements.txt` (see the file for PEP 668 systems) — enables read-aloud.
 
 Linux deb: `npm run deb` builds it and then patches the desktop entry to
 `Exec=markdawn %f` (Tauri omits `%f`, which breaks Open With → file) and registers

@@ -174,13 +174,16 @@ export async function readAloud(mode: ReadMode) {
   try {
     const chunks = chunkForSpeech(target.text)
     if (chunks.length === 0) return
-    // Prefetch: the next sentence synthesizes while the current one plays, so
-    // there's no synth pause between sentences.
-    let pending = synth(chunks[0])
+    // Prefetch pipeline: keep DEPTH synths in flight (each edge-tts invocation
+    // pays a full Python+network round trip, so one-deep still gaps on short
+    // sentences). Steady state: a chunk is usually already synthesized when
+    // its turn comes, so playback is continuous.
+    const DEPTH = 3
+    const queue: Promise<string>[] = chunks.slice(0, DEPTH).map(synth)
     for (let i = 0; i < chunks.length; i++) {
       if (token !== readToken) return
-      const mp3 = await pending
-      if (i + 1 < chunks.length) pending = synth(chunks[i + 1])
+      const mp3 = await queue.shift()!
+      if (i + DEPTH < chunks.length) queue.push(synth(chunks[i + DEPTH]))
       highlight(target, chunks[i])
       const player = await play(mp3)
       if (token !== readToken) return
