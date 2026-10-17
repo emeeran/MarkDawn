@@ -17,7 +17,11 @@ pub struct Cmd<T> {
 
 impl<T> Cmd<T> {
     pub fn ok(value: T) -> Self {
-        Cmd { ok: true, value, error: None }
+        Cmd {
+            ok: true,
+            value,
+            error: None,
+        }
     }
 }
 
@@ -25,7 +29,11 @@ impl<T: Default> Cmd<T> {
     /// Error result; the value is the type's default (the frontend reads it
     /// only on ok).
     pub fn err(error: impl Into<String>) -> Self {
-        Cmd { ok: false, value: T::default(), error: Some(error.into()) }
+        Cmd {
+            ok: false,
+            value: T::default(),
+            error: Some(error.into()),
+        }
     }
 }
 
@@ -56,18 +64,32 @@ async fn pick(kind: &str, default_name: Option<String>) -> Result<Option<String>
     let mut tools: Vec<(&'static str, Vec<String>)> = Vec::new();
     match (kind, default_name.as_deref()) {
         ("folder", _) => {
-            tools.push(("zenity", vec!["--file-selection".into(), "--directory".into()]));
-            tools.push(("kdialog", vec!["--getexistingdirectory".into(), home_dir.clone()]));
+            tools.push((
+                "zenity",
+                vec!["--file-selection".into(), "--directory".into()],
+            ));
+            tools.push((
+                "kdialog",
+                vec!["--getexistingdirectory".into(), home_dir.clone()],
+            ));
         }
         ("file", _) => {
             tools.push(("zenity", vec!["--file-selection".into()]));
-            tools.push(("kdialog", vec!["--getopenfilename".into(), home_dir.clone()]));
+            tools.push((
+                "kdialog",
+                vec!["--getopenfilename".into(), home_dir.clone()],
+            ));
         }
         ("save", Some(name)) => {
             let kdialog_start = format!("{home_dir}/{name}");
             tools.push((
                 "zenity",
-                vec!["--file-selection".into(), "--save".into(), "--filename".into(), name.into()],
+                vec![
+                    "--file-selection".into(),
+                    "--save".into(),
+                    "--filename".into(),
+                    name.into(),
+                ],
             ));
             tools.push(("kdialog", vec!["--getsavefilename".into(), kdialog_start]));
         }
@@ -84,7 +106,11 @@ async fn pick(kind: &str, default_name: Option<String>) -> Result<Option<String>
     Err(last)
 }
 
-fn spawn_pick(kind: &'static str, default_name: Option<String>, on_result: Channel<Cmd<Option<String>>>) {
+fn spawn_pick(
+    kind: &'static str,
+    default_name: Option<String>,
+    on_result: Channel<Cmd<Option<String>>>,
+) {
     tauri::async_runtime::spawn(async move {
         let out = match pick(kind, default_name).await {
             Ok(v) => Cmd::ok(v),

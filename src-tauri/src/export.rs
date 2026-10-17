@@ -1,6 +1,6 @@
 use crate::pick::Cmd;
-use tauri::ipc::Channel;
 use tauri::command;
+use tauri::ipc::Channel;
 
 /// SYNC command — async-command responses don't resolve on this WebKitGTK
 /// build. Runs off-thread with a hard timeout (same pattern as the clipboard
@@ -19,7 +19,8 @@ pub fn pandoc_available() -> bool {
         )
         .ok();
     });
-    rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap_or(false)
+    rx.recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap_or(false)
 }
 
 /// Convert a saved Markdown file with pandoc. Channel-delivered (async

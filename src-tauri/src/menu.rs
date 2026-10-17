@@ -17,7 +17,15 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
 
     let menu = MenuBuilder::new(app)
         .items(&[
-            &file, &edit, &paragraph, &format, &ai, &read_aloud, &view, &themes, &help,
+            &file,
+            &edit,
+            &paragraph,
+            &format,
+            &ai,
+            &read_aloud,
+            &view,
+            &themes,
+            &help,
         ])
         .build()?;
 
@@ -50,7 +58,12 @@ fn file_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
     m.append_items(&[
         &item(app, "file.new", "New File", Some("CmdOrCtrl+N"))?,
         &item(app, "file.open", "Open…", Some("CmdOrCtrl+O"))?,
-        &item(app, "file.openFolder", "Open Folder…", Some("Shift+CmdOrCtrl+O"))?,
+        &item(
+            app,
+            "file.openFolder",
+            "Open Folder…",
+            Some("Shift+CmdOrCtrl+O"),
+        )?,
         &sep(app)?,
         &item(app, "file.save", "Save", Some("CmdOrCtrl+S"))?,
         &item(app, "file.saveAs", "Save As…", Some("Shift+CmdOrCtrl+S"))?,
@@ -60,7 +73,12 @@ fn file_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
         &item(app, "app.settings", "Preferences…", Some("CmdOrCtrl+,"))?,
         &sep(app)?,
         &item(app, "file.closeTab", "Close Tab", Some("CmdOrCtrl+W"))?,
-        &item(app, "file.reopenTab", "Reopen Closed Tab", Some("Shift+CmdOrCtrl+T"))?,
+        &item(
+            app,
+            "file.reopenTab",
+            "Reopen Closed Tab",
+            Some("Shift+CmdOrCtrl+T"),
+        )?,
         &PredefinedMenuItem::quit(app, None)?,
     ])?;
     Ok(m)
@@ -97,7 +115,12 @@ fn edit_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
         &item(app, "edit.selectAll", "Select All", None)?,
         &sep(app)?,
         &item(app, "edit.find", "Find / Replace…", Some("CmdOrCtrl+F"))?,
-        &item(app, "edit.searchWorkspace", "Search in Workspace…", Some("Alt+CmdOrCtrl+F"))?,
+        &item(
+            app,
+            "edit.searchWorkspace",
+            "Search in Workspace…",
+            Some("Alt+CmdOrCtrl+F"),
+        )?,
     ])?;
     Ok(m)
 }
@@ -107,7 +130,12 @@ fn read_aloud_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
     m.append_items(&[
         &item(app, "tts.doc", "Read Document", Some("CmdOrCtrl+Shift+R"))?,
         &item(app, "tts.sel", "Read Selection", Some("CmdOrCtrl+Alt+R"))?,
-        &item(app, "tts.cursor", "Read From Cursor", Some("CmdOrCtrl+Alt+Shift+R"))?,
+        &item(
+            app,
+            "tts.cursor",
+            "Read From Cursor",
+            Some("CmdOrCtrl+Alt+Shift+R"),
+        )?,
         &sep(app)?,
         &item(app, "tts.stop", "Stop Reading", Some("CmdOrCtrl+Alt+S"))?,
     ])?;
@@ -184,15 +212,35 @@ fn view_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
     let m = Submenu::new(app, "View", true)?;
     m.append_items(&[
         &item(app, "view.source", "Source Mode", Some("CmdOrCtrl+/"))?,
-        &item(app, "view.mode", "Plain Text Mode", Some("CmdOrCtrl+Shift+P"))?,
+        &item(
+            app,
+            "view.mode",
+            "Plain Text Mode",
+            Some("CmdOrCtrl+Shift+P"),
+        )?,
         &item(app, "view.focus", "Focus Mode", Some("CmdOrCtrl+Shift+F"))?,
-        &item(app, "view.typewriter", "Typewriter Mode", Some("Alt+CmdOrCtrl+T"))?,
-        &item(app, "view.ghost", "Ghost Text Autocomplete", Some("Alt+CmdOrCtrl+G"))?,
+        &item(
+            app,
+            "view.typewriter",
+            "Typewriter Mode",
+            Some("Alt+CmdOrCtrl+T"),
+        )?,
+        &item(
+            app,
+            "view.ghost",
+            "Ghost Text Autocomplete",
+            Some("Alt+CmdOrCtrl+G"),
+        )?,
         &item(app, "view.wordCount", "Word Count", None)?,
         &sep(app)?,
         &item(app, "view.fontBigger", "Bigger Text", Some("CmdOrCtrl+="))?,
         &item(app, "view.fontSmaller", "Smaller Text", Some("CmdOrCtrl+-"))?,
-        &item(app, "view.fontReset", "Reset Text Size", Some("CmdOrCtrl+0"))?,
+        &item(
+            app,
+            "view.fontReset",
+            "Reset Text Size",
+            Some("CmdOrCtrl+0"),
+        )?,
         &sep(app)?,
         &item(app, "view.sidebar", "File Tree", Some("CmdOrCtrl+Shift+L"))?,
         &item(app, "view.outline", "Outline", Some("Alt+CmdOrCtrl+O"))?,

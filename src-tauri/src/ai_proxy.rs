@@ -158,7 +158,9 @@ fn ollama_endpoint(base: &reqwest::Url, path: &str) -> String {
         "{}://{}{}/api/{path}",
         base.scheme(),
         base.host_str().unwrap_or_default(),
-        base.port_or_known_default().map(|p| format!(":{p}")).unwrap_or_default()
+        base.port_or_known_default()
+            .map(|p| format!(":{p}"))
+            .unwrap_or_default()
     )
 }
 
@@ -204,9 +206,7 @@ pub fn fetch_models(
 
 async fn list_models(provider: String, ollama_url: Option<String>) -> Result<Vec<String>, String> {
     match provider.as_str() {
-        "ollama" => {
-            ollama_tags(ollama_url.as_deref().unwrap_or(DEFAULT_OLLAMA)).await
-        }
+        "ollama" => ollama_tags(ollama_url.as_deref().unwrap_or(DEFAULT_OLLAMA)).await,
         // OpenAI-compatible {data: [{id}]} shape.
         "openai" => list_bearer_models("https://api.openai.com/v1/models", "openai").await,
         "groq" => list_bearer_models("https://api.groq.com/openai/v1/models", "groq").await,
@@ -271,9 +271,11 @@ async fn list_bearer_models(url: &str, provider: &str) -> Result<Vec<String>, St
 /// Keep in sync with NON_CHAT_MODEL in src/stores/settings.ts.
 fn is_chat_model(id: &str) -> bool {
     let l = id.to_lowercase();
-    !["guard", "whisper", "tts", "embed", "rerank", "safety", "dall-e"]
-        .iter()
-        .any(|k| l.contains(k))
+    ![
+        "guard", "whisper", "tts", "embed", "rerank", "safety", "dall-e",
+    ]
+    .iter()
+    .any(|k| l.contains(k))
 }
 
 async fn stream(req: &AiRequest, ch: &Channel<AiEvent>) -> Result<(), String> {
@@ -285,7 +287,8 @@ async fn stream(req: &AiRequest, ch: &Channel<AiEvent>) -> Result<(), String> {
                 "openai",
                 req,
                 ch,
-            ).await
+            )
+            .await
         }
         // Groq speaks the OpenAI chat-completions protocol.
         "groq" => {
@@ -294,7 +297,8 @@ async fn stream(req: &AiRequest, ch: &Channel<AiEvent>) -> Result<(), String> {
                 "groq",
                 req,
                 ch,
-            ).await
+            )
+            .await
         }
         "ollama" => stream_ollama(req, ch).await,
         other => Err(format!("unknown provider: {other}")),
@@ -306,7 +310,9 @@ fn emit(ch: &Channel<AiEvent>, text: &str, sent: &mut usize, max: usize) -> Resu
     if *sent > max {
         return Err("completion exceeded length limit".into());
     }
-    let _ = ch.send(AiEvent::Delta { text: text.to_string() });
+    let _ = ch.send(AiEvent::Delta {
+        text: text.to_string(),
+    });
     Ok(())
 }
 
@@ -314,7 +320,11 @@ async fn post_stream(
     builder: reqwest::RequestBuilder,
     provider: &str,
 ) -> Result<reqwest::Response, String> {
-    let resp = builder.timeout(Duration::from_secs(600)).send().await.map_err(|e| e.to_string())?;
+    let resp = builder
+        .timeout(Duration::from_secs(600))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
@@ -393,26 +403,39 @@ enum LineOut {
 }
 
 fn parse_anthropic_line(line: &str) -> LineOut {
-    let Some(payload) = line.trim().strip_prefix("data:") else { return LineOut::Nothing };
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(payload.trim()) else { return LineOut::Nothing };
+    let Some(payload) = line.trim().strip_prefix("data:") else {
+        return LineOut::Nothing;
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(payload.trim()) else {
+        return LineOut::Nothing;
+    };
     match v["type"].as_str() {
         Some("content_block_delta") => match v["delta"]["text"].as_str() {
             Some(t) if !t.is_empty() => LineOut::Delta(t.into()),
             _ => LineOut::Nothing,
         },
-        Some("error") => LineOut::Error(v["error"]["message"].as_str().unwrap_or("stream error").into()),
+        Some("error") => LineOut::Error(
+            v["error"]["message"]
+                .as_str()
+                .unwrap_or("stream error")
+                .into(),
+        ),
         Some("message_stop") => LineOut::Stop,
         _ => LineOut::Nothing,
     }
 }
 
 fn parse_openai_line(line: &str) -> LineOut {
-    let Some(payload) = line.trim().strip_prefix("data:") else { return LineOut::Nothing };
+    let Some(payload) = line.trim().strip_prefix("data:") else {
+        return LineOut::Nothing;
+    };
     let payload = payload.trim();
     if payload == "[DONE]" {
         return LineOut::Stop;
     }
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(payload) else { return LineOut::Nothing };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(payload) else {
+        return LineOut::Nothing;
+    };
     match v["choices"][0]["delta"]["content"].as_str() {
         Some(t) if !t.is_empty() => LineOut::Delta(t.into()),
         _ => LineOut::Nothing,
@@ -420,7 +443,9 @@ fn parse_openai_line(line: &str) -> LineOut {
 }
 
 fn parse_ollama_line(line: &str) -> LineOut {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(line.trim()) else { return LineOut::Nothing };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+        return LineOut::Nothing;
+    };
     if let Some(e) = v["error"].as_str() {
         return LineOut::Error(e.into());
     }
@@ -437,7 +462,12 @@ fn parse_ollama_line(line: &str) -> LineOut {
 
 /// Shared pump: read byte chunks, split into lines, hand each to the
 /// provider parser, emit deltas until a Stop or Error.
-async fn pump_lines<F>(resp: reqwest::Response, ch: &Channel<AiEvent>, max: usize, parse: F) -> Result<(), String>
+async fn pump_lines<F>(
+    resp: reqwest::Response,
+    ch: &Channel<AiEvent>,
+    max: usize,
+    parse: F,
+) -> Result<(), String>
 where
     F: Fn(&str) -> LineOut,
 {
@@ -472,12 +502,14 @@ async fn stream_anthropic(req: &AiRequest, ch: &Channel<AiEvent>) -> Result<(), 
             .collect::<Vec<_>>(),
     });
     let resp = post_stream(
-        client()?.post(url)
+        client()?
+            .post(url)
             .header("x-api-key", &key)
             .header("anthropic-version", "2023-06-01")
             .json(&body),
         "anthropic",
-    ).await?;
+    )
+    .await?;
     pump_lines(resp, ch, req.max_chars, parse_anthropic_line).await
 }
 
@@ -495,9 +527,13 @@ async fn stream_openai_compatible(
         "messages": chat_messages(&req.system, &req.messages),
     });
     let resp = post_stream(
-        client()?.post(url).header("Authorization", format!("Bearer {key}")).json(&body),
+        client()?
+            .post(url)
+            .header("Authorization", format!("Bearer {key}"))
+            .json(&body),
         provider,
-    ).await?;
+    )
+    .await?;
     pump_lines(resp, ch, req.max_chars, parse_openai_line).await
 }
 
@@ -541,7 +577,10 @@ mod tests {
     #[test]
     fn extract_api_error_pulls_message_field() {
         let body = r#"{"error":{"message":"text classification models do not support streaming","type":"invalid_request_error"}}"#;
-        assert_eq!(extract_api_error(body), "text classification models do not support streaming");
+        assert_eq!(
+            extract_api_error(body),
+            "text classification models do not support streaming"
+        );
     }
 
     #[test]
@@ -599,10 +638,15 @@ mod tests {
     #[test]
     fn anthropic_parser_reads_deltas_stop_and_error() {
         assert_eq!(
-            parse_anthropic_line("data: {\"type\":\"content_block_delta\",\"delta\":{\"text\":\"hi\"}}"),
+            parse_anthropic_line(
+                "data: {\"type\":\"content_block_delta\",\"delta\":{\"text\":\"hi\"}}"
+            ),
             LineOut::Delta("hi".into())
         );
-        assert_eq!(parse_anthropic_line("data: {\"type\":\"message_stop\"}"), LineOut::Stop);
+        assert_eq!(
+            parse_anthropic_line("data: {\"type\":\"message_stop\"}"),
+            LineOut::Stop
+        );
         assert_eq!(
             parse_anthropic_line("data: {\"type\":\"error\",\"error\":{\"message\":\"boom\"}}"),
             LineOut::Error("boom".into())
@@ -627,8 +671,14 @@ mod tests {
             parse_ollama_line("{\"message\":{\"content\":\"yo\"},\"done\":false}"),
             LineOut::Delta("yo".into())
         );
-        assert_eq!(parse_ollama_line("{\"message\":{\"content\":\"\"},\"done\":true}"), LineOut::Stop);
-        assert_eq!(parse_ollama_line("{\"error\":\"model missing\"}"), LineOut::Error("model missing".into()));
+        assert_eq!(
+            parse_ollama_line("{\"message\":{\"content\":\"\"},\"done\":true}"),
+            LineOut::Stop
+        );
+        assert_eq!(
+            parse_ollama_line("{\"error\":\"model missing\"}"),
+            LineOut::Error("model missing".into())
+        );
     }
 
     #[test]
@@ -648,9 +698,18 @@ mod tests {
     #[test]
     fn chat_messages_prepends_system_and_skips_system_role() {
         let msgs = vec![
-            AiMessage { role: "system".into(), content: "sneaky".into() },
-            AiMessage { role: "user".into(), content: "q".into() },
-            AiMessage { role: "assistant".into(), content: "a".into() },
+            AiMessage {
+                role: "system".into(),
+                content: "sneaky".into(),
+            },
+            AiMessage {
+                role: "user".into(),
+                content: "q".into(),
+            },
+            AiMessage {
+                role: "assistant".into(),
+                content: "a".into(),
+            },
         ];
         let out = chat_messages("sys", &msgs);
         assert_eq!(out.len(), 3);

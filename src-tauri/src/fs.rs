@@ -31,9 +31,7 @@ pub fn watch_state() -> WatchState {
 /// an EMPTY file over the target. Failed writes leave no .tmp behind.
 pub(crate) fn atomic_write(path: &Path, contents: &str) -> Result<(), String> {
     use std::io::Write as _;
-    let dir = path
-        .parent()
-        .ok_or_else(|| "invalid path".to_string())?;
+    let dir = path.parent().ok_or_else(|| "invalid path".to_string())?;
     let tmp = dir.join(format!(
         ".{}.tmp",
         path.file_name()
@@ -41,10 +39,7 @@ pub(crate) fn atomic_write(path: &Path, contents: &str) -> Result<(), String> {
             .unwrap_or_else(|| "notepad".into())
     ));
     let mut f = fs::File::create(&tmp).map_err(|e| e.to_string())?;
-    if let Err(e) = f
-        .write_all(contents.as_bytes())
-        .and_then(|_| f.sync_all())
-    {
+    if let Err(e) = f.write_all(contents.as_bytes()).and_then(|_| f.sync_all()) {
         let _ = fs::remove_file(&tmp);
         return Err(e.to_string());
     }
@@ -64,7 +59,9 @@ pub struct FsGuard {
 }
 
 pub fn fs_guard() -> FsGuard {
-    FsGuard { roots: Arc::new(Mutex::new(Vec::new())) }
+    FsGuard {
+        roots: Arc::new(Mutex::new(Vec::new())),
+    }
 }
 
 /// Lexical cleanup of `.` and `..` without requiring the path to exist.
@@ -117,7 +114,10 @@ impl FsGuard {
         if roots.iter().any(|r| c.starts_with(r)) {
             Ok(())
         } else {
-            Err(format!("path outside the allowed scope: {}", path.display()))
+            Err(format!(
+                "path outside the allowed scope: {}",
+                path.display()
+            ))
         }
     }
 }
@@ -150,7 +150,13 @@ pub fn fs_allow(app: AppHandle, path: String) -> Result<(), String> {
 /// before any file is opened. Called once from setup.
 pub fn seed_guard(app: &AppHandle) {
     let guard = app.state::<FsGuard>();
-    for dir in [app.path().app_config_dir().ok(), app.path().app_data_dir().ok()].into_iter().flatten() {
+    for dir in [
+        app.path().app_config_dir().ok(),
+        app.path().app_data_dir().ok(),
+    ]
+    .into_iter()
+    .flatten()
+    {
         guard.allow(&dir);
     }
 }
@@ -173,7 +179,11 @@ pub fn read_dir(path: String, guard: State<'_, FsGuard>) -> Result<Vec<FileNode>
             is_dir,
         });
     }
-    nodes.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then(a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+    nodes.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
     Ok(nodes)
 }
 
@@ -191,14 +201,20 @@ const MAX_DOC_BYTES: u64 = 20 * 1024 * 1024;
 fn read_file_capped(p: &Path, max: u64) -> Result<String, String> {
     let len = fs::metadata(p).map_err(|e| e.to_string())?.len();
     if len > max {
-        return Err(format!("file too large to open (>{} MB)", max / (1024 * 1024)));
+        return Err(format!(
+            "file too large to open (>{} MB)",
+            max / (1024 * 1024)
+        ));
     }
     fs::read_to_string(p).map_err(|e| e.to_string())
 }
 
 /// Disk mtime in whole milliseconds since the epoch (0 if before it).
 pub(crate) fn mtime_ms(path: &Path) -> Result<u64, String> {
-    let mtime = fs::metadata(path).map_err(|e| e.to_string())?.modified().map_err(|e| e.to_string())?;
+    let mtime = fs::metadata(path)
+        .map_err(|e| e.to_string())?
+        .modified()
+        .map_err(|e| e.to_string())?;
     Ok(mtime
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -293,7 +309,11 @@ pub fn image_import(app: AppHandle, doc_dir: String, src: String) -> Result<Stri
     let src_path = PathBuf::from(&src);
     app.state::<FsGuard>().check(&src_path)?;
     let ext = src_ext(&src_path)?;
-    import_image_inner(&dir, ext, |dest| fs::copy(&src_path, dest).map(|_| ()).map_err(|e| e.to_string()))
+    import_image_inner(&dir, ext, |dest| {
+        fs::copy(&src_path, dest)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })
 }
 
 /// Write a pasted (clipboard) image into `<doc>_assets/`; `bytes` is the raw
@@ -311,7 +331,9 @@ pub fn image_save_bytes(
     if !["png", "jpg", "jpeg", "gif", "svg", "webp"].contains(&ext.as_str()) {
         return Err("unsupported image type".into());
     }
-    import_image_inner(&dir, ext, |dest| fs::write(dest, bytes.as_slice()).map_err(|e| e.to_string()))
+    import_image_inner(&dir, ext, |dest| {
+        fs::write(dest, bytes.as_slice()).map_err(|e| e.to_string())
+    })
 }
 
 fn import_image_inner(
@@ -346,12 +368,22 @@ fn import_image_inner(
 /// them to). Goes to app-data/recovery/, never touches user folders.
 #[tauri::command]
 pub fn save_recovery(app: AppHandle, title: String, contents: String) -> Result<String, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("recovery");
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("recovery");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let stamp = epoch_ms() / 1000;
     let safe: String = title
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let path = dir.join(format!("{safe}-{stamp}.md"));
     fs::write(&path, contents).map_err(|e| e.to_string())?;
@@ -480,8 +512,14 @@ fn read_clipboard_image_inner() -> Option<ClipboardImage> {
     let bitmap_attempts: [(&str, Vec<&str>); 4] = [
         ("wl-paste", vec!["--no-newline", "--type", "image/png"]),
         ("wl-paste", vec!["--no-newline", "--type", "image/jpeg"]),
-        ("xclip", vec!["-selection", "clipboard", "-o", "-t", "image/png"]),
-        ("xclip", vec!["-selection", "clipboard", "-o", "-t", "image/jpeg"]),
+        (
+            "xclip",
+            vec!["-selection", "clipboard", "-o", "-t", "image/png"],
+        ),
+        (
+            "xclip",
+            vec!["-selection", "clipboard", "-o", "-t", "image/jpeg"],
+        ),
     ];
     for (prog, args) in bitmap_attempts {
         let Ok(out) = std::process::Command::new(prog)
@@ -508,8 +546,20 @@ fn read_clipboard_image_inner() -> Option<ClipboardImage> {
     let uri_attempts: [(&str, Vec<&str>); 4] = [
         ("wl-paste", vec!["--type", "text/uri-list"]),
         ("wl-paste", vec!["--type", "x-special/gnome-copied-files"]),
-        ("xclip", vec!["-selection", "clipboard", "-o", "-t", "text/uri-list"]),
-        ("xclip", vec!["-selection", "clipboard", "-o", "-t", "x-special/gnome-copied-files"]),
+        (
+            "xclip",
+            vec!["-selection", "clipboard", "-o", "-t", "text/uri-list"],
+        ),
+        (
+            "xclip",
+            vec![
+                "-selection",
+                "clipboard",
+                "-o",
+                "-t",
+                "x-special/gnome-copied-files",
+            ],
+        ),
     ];
     for (prog, args) in uri_attempts {
         let Ok(out) = std::process::Command::new(prog)
@@ -597,7 +647,10 @@ pub fn clipboard_read_text() -> Result<Option<String>, String> {
 fn read_clipboard_text_inner() -> Option<String> {
     let attempts: [(&str, Vec<&str>); 3] = [
         ("wl-paste", vec!["--no-newline", "--type", "text/plain"]),
-        ("xclip", vec!["-selection", "clipboard", "-o", "-t", "text/plain"]),
+        (
+            "xclip",
+            vec!["-selection", "clipboard", "-o", "-t", "text/plain"],
+        ),
         ("xclip", vec!["-selection", "clipboard", "-o"]),
     ];
     for (prog, args) in attempts {
@@ -635,7 +688,9 @@ fn percent_decode(s: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 3 <= bytes.len() {
-            if let Ok(v) = u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16) {
+            if let Ok(v) =
+                u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
+            {
                 out.push(v);
                 i += 3;
                 continue;
@@ -679,7 +734,9 @@ pub fn watch_start(
 
     // Watched trees may contain images the editor renders — allow the whole
     // asset scope for the workspace (recursive).
-    let _ = app2.asset_protocol_scope().allow_directory(&canonicalize_best_effort(Path::new(&root)), true);
+    let _ = app2
+        .asset_protocol_scope()
+        .allow_directory(&canonicalize_best_effort(Path::new(&root)), true);
 
     // Collector thread: batch paths, emit at most every 300 ms of quiet.
     std::thread::spawn(move || {
@@ -746,7 +803,10 @@ pub fn recent_push(app: AppHandle, path: String) -> Result<(), String> {
     list.insert(0, path);
     list.truncate(15);
     // Atomic: a crash mid-write used to truncate the whole recents file.
-    atomic_write(&file, &serde_json::to_string(&list).map_err(|e| e.to_string())?)
+    atomic_write(
+        &file,
+        &serde_json::to_string(&list).map_err(|e| e.to_string())?,
+    )
 }
 
 #[tauri::command]
@@ -777,7 +837,10 @@ fn read_json_preserving_corrupt<T: serde::de::DeserializeOwned>(path: &Path, def
         Ok(v) => v,
         Err(_) => {
             let stamp = epoch_ms();
-            let _ = fs::rename(path, PathBuf::from(format!("{}.corrupt-{stamp}", path.display())));
+            let _ = fs::rename(
+                path,
+                PathBuf::from(format!("{}.corrupt-{stamp}", path.display())),
+            );
             default
         }
     }
@@ -793,7 +856,10 @@ pub fn store_get(app: AppHandle, name: String) -> Result<serde_json::Value, Stri
 #[tauri::command]
 pub fn store_set(app: AppHandle, name: String, value: serde_json::Value) -> Result<(), String> {
     let path = config_path(&app, &store_file_name(&name)?)?;
-    atomic_write(&path, &serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?)
+    atomic_write(
+        &path,
+        &serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?,
+    )
 }
 
 fn store_file_name(name: &str) -> Result<String, String> {
@@ -853,18 +919,33 @@ enum SearchNeedle {
 impl SearchNeedle {
     fn matches(&self, line: &str) -> bool {
         match self {
-            SearchNeedle::Literal { text, case_sensitive } => {
-                if *case_sensitive { line.contains(text.as_str()) } else { line.to_lowercase().contains(text) }
+            SearchNeedle::Literal {
+                text,
+                case_sensitive,
+            } => {
+                if *case_sensitive {
+                    line.contains(text.as_str())
+                } else {
+                    line.to_lowercase().contains(text)
+                }
             }
             SearchNeedle::Regex(re) => re.is_match(line),
         }
     }
 }
 
-fn build_needle(query: String, case_sensitive: bool, use_regex: bool) -> Result<SearchNeedle, String> {
+fn build_needle(
+    query: String,
+    case_sensitive: bool,
+    use_regex: bool,
+) -> Result<SearchNeedle, String> {
     if !use_regex {
         return Ok(SearchNeedle::Literal {
-            text: if case_sensitive { query } else { query.to_lowercase() },
+            text: if case_sensitive {
+                query
+            } else {
+                query.to_lowercase()
+            },
             case_sensitive,
         });
     }
@@ -911,11 +992,19 @@ pub fn workspace_search(
     });
 }
 
-fn walk_search(dir: &Path, needle: &SearchNeedle, depth: usize, visited: &mut usize, hits: &mut Vec<SearchHit>) {
+fn walk_search(
+    dir: &Path,
+    needle: &SearchNeedle,
+    depth: usize,
+    visited: &mut usize,
+    hits: &mut Vec<SearchHit>,
+) {
     if depth > MAX_SEARCH_DEPTH || hits.len() >= MAX_SEARCH_HITS || *visited >= MAX_SEARCH_FILES {
         return;
     }
-    let Ok(entries) = fs::read_dir(dir) else { return };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
     let mut entries: Vec<_> = entries.flatten().collect();
     entries.sort_by_key(|e| e.file_name());
     for entry in entries {
@@ -930,7 +1019,14 @@ fn walk_search(dir: &Path, needle: &SearchNeedle, depth: usize, visited: &mut us
             }
             continue;
         }
-        if !SEARCH_EXTS.contains(&name.rsplit('.').next().unwrap_or_default().to_lowercase().as_str()) {
+        if !SEARCH_EXTS.contains(
+            &name
+                .rsplit('.')
+                .next()
+                .unwrap_or_default()
+                .to_lowercase()
+                .as_str(),
+        ) {
             continue;
         }
         *visited += 1;
@@ -938,12 +1034,18 @@ fn walk_search(dir: &Path, needle: &SearchNeedle, depth: usize, visited: &mut us
         if meta.len() > MAX_SEARCH_FILE_BYTES {
             continue;
         }
-        let Ok(text) = fs::read_to_string(entry.path()) else { continue }; // binary → skip
+        let Ok(text) = fs::read_to_string(entry.path()) else {
+            continue;
+        }; // binary → skip
         let path = entry.path().to_string_lossy().to_string();
         let mut per_file = 0usize;
         for (i, line) in text.lines().enumerate() {
             if needle.matches(line) {
-                hits.push(SearchHit { path: path.clone(), line: line.to_string(), line_no: i + 1 });
+                hits.push(SearchHit {
+                    path: path.clone(),
+                    line: line.to_string(),
+                    line_no: i + 1,
+                });
                 per_file += 1;
                 if hits.len() >= MAX_SEARCH_HITS || per_file >= 20 {
                     break;
@@ -966,7 +1068,11 @@ mod tests {
     #[test]
     fn workspace_search_regex_and_bad_patterns() {
         let dir = tmpdir("wsregex");
-        fs::write(dir.join("notes.md"), "todo: fix the thing\nTODO 42: harder\nplain line\n").unwrap();
+        fs::write(
+            dir.join("notes.md"),
+            "todo: fix the thing\nTODO 42: harder\nplain line\n",
+        )
+        .unwrap();
         let mut hits = Vec::new();
         let mut visited = 0usize;
 
@@ -1115,7 +1221,9 @@ mod tests {
     fn guard_allows_within_and_blocks_outside() {
         let ws = tmpdir("guard-ws");
         let outside = tmpdir("guard-out");
-        let g = FsGuard { roots: Arc::new(Mutex::new(Vec::new())) };
+        let g = FsGuard {
+            roots: Arc::new(Mutex::new(Vec::new())),
+        };
         g.allow(&ws);
 
         assert!(g.check(&ws.join("note.md")).is_ok());

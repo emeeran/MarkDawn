@@ -18,7 +18,10 @@ pub struct TtsState {
 }
 
 pub fn tts_state() -> TtsState {
-    TtsState { synth: Mutex::new(None), player: Mutex::new(None) }
+    TtsState {
+        synth: Mutex::new(None),
+        player: Mutex::new(None),
+    }
 }
 
 /// Desktop sessions inherit PATH from the systemd user environment, which
@@ -91,13 +94,14 @@ pub fn tts_voices(on_result: Channel<Cmd<Vec<String>>>) {
             }
             let text = String::from_utf8_lossy(&proc_out.stdout);
             // Lines look like: "en-US-AriaNeural    Female    ..." — first token is the name.
-            Ok::<Vec<String>, String>(text
-                .lines()
-                .skip(1) // header row
-                .filter_map(|l| l.split_whitespace().next())
-                .filter(|s| s.contains('-'))
-                .map(String::from)
-                .collect())
+            Ok::<Vec<String>, String>(
+                text.lines()
+                    .skip(1) // header row
+                    .filter_map(|l| l.split_whitespace().next())
+                    .filter(|s| s.contains('-'))
+                    .map(String::from)
+                    .collect(),
+            )
         })
         .await;
         let out = match out {
@@ -165,7 +169,10 @@ pub fn tts_play(app: AppHandle, mp3: String, on_result: Channel<Cmd<String>>) {
 /// the joined `--opt=value` form keeps a leading `-` out of flag position.
 fn valid_tts_param(s: &str, suffix: &str) -> bool {
     let num = s.strip_suffix(suffix).unwrap_or("");
-    let num = num.strip_prefix('+').or_else(|| num.strip_prefix('-')).unwrap_or(num);
+    let num = num
+        .strip_prefix('+')
+        .or_else(|| num.strip_prefix('-'))
+        .unwrap_or(num);
     !num.is_empty() && num.chars().all(|c| c.is_ascii_digit())
 }
 
@@ -209,9 +216,12 @@ async fn synth_inner(
     let mp32 = mp3.clone();
     let voice = voice.unwrap_or_else(|| "en-US-AriaNeural".into());
     let mut cmd = tokio::process::Command::new(edge_tts_path());
-    cmd.arg("--file").arg(&txt2)
-        .arg("--voice").arg(&voice)
-        .arg("--write-media").arg(&mp32);
+    cmd.arg("--file")
+        .arg(&txt2)
+        .arg("--voice")
+        .arg(&voice)
+        .arg("--write-media")
+        .arg(&mp32);
     for (value, suffix, flag) in [
         (rate, "%", "--rate"),
         (pitch, "Hz", "--pitch"),
@@ -298,8 +308,11 @@ async fn play_inner(mp3: &std::path::Path, state: &TtsState) -> Result<String, S
     let player = play("mpv", &["--no-video", "--really-quiet"])
         .map(|c| (c, "mpv"))
         .or_else(|| {
-            play("ffplay", ["-nodisp", "-autoexit", "-loglevel", "quiet"].as_slice())
-                .map(|c| (c, "ffplay"))
+            play(
+                "ffplay",
+                ["-nodisp", "-autoexit", "-loglevel", "quiet"].as_slice(),
+            )
+            .map(|c| (c, "ffplay"))
         })
         .or_else(|| play("xdg-open", &[]).map(|c| (c, "xdg-open")));
     match player {
@@ -348,7 +361,9 @@ async fn play_inner(mp3: &std::path::Path, state: &TtsState) -> Result<String, S
 /// Remove notepad-tts temp files older than an hour. Document text used to
 /// sit in /tmp forever.
 fn cleanup_old_temp_files() {
-    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else { return };
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
+        return;
+    };
     let cutoff = std::time::SystemTime::now() - Duration::from_secs(3600);
     for e in entries.flatten() {
         let name = e.file_name();
@@ -396,7 +411,9 @@ mod tests {
         let dir = std::env::temp_dir();
         assert!(is_app_synth(&dir.join("notepad-tts-123-456.mp3")));
         // Wrong location or wrong name: rejected.
-        assert!(!is_app_synth(std::path::Path::new("/etc/notepad-tts-123-456.mp3")));
+        assert!(!is_app_synth(std::path::Path::new(
+            "/etc/notepad-tts-123-456.mp3"
+        )));
         assert!(!is_app_synth(&dir.join("passwd")));
         assert!(!is_app_synth(&dir.join("notepad-tts-evil/../../.bashrc")));
     }

@@ -16,7 +16,9 @@ fn entry(provider: &str) -> Result<Entry, String> {
 /// ask whether one exists — it can never read the key back.
 #[tauri::command]
 pub fn secret_set(provider: String, key: String) -> Result<(), String> {
-    entry(&provider)?.set_password(&key).map_err(|e| e.to_string())
+    entry(&provider)?
+        .set_password(&key)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
