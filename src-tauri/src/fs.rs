@@ -753,10 +753,19 @@ pub fn watch_start(
     guard.allow(&root_path);
     let app2 = app.clone();
     let (tx, rx) = mpsc::channel::<std::path::PathBuf>();
+    // Runtime watch errors (inotify queue overflow, deleted directory) must
+    // not vanish: forwarding the root path makes the frontend re-read the
+    // tree, so detection degrades to refresh-on-error instead of silence.
+    let err_root = root_path.clone();
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-        if let Ok(event) = res {
-            for path in event.paths {
-                let _ = tx.send(path);
+        match res {
+            Ok(event) => {
+                for path in event.paths {
+                    let _ = tx.send(path);
+                }
+            }
+            Err(_) => {
+                let _ = tx.send(err_root.clone());
             }
         }
     })

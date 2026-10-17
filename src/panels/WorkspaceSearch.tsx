@@ -24,6 +24,7 @@ export function WorkspaceSearch({ onClose }: { onClose: () => void }) {
   const [index, setIndex] = useState(0)
   const [searching, setSearching] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const runSeq = useRef(0)
   const root = useWorkspace((s) => s.root)
 
   useEffect(() => inputRef.current?.focus(), [])
@@ -31,18 +32,23 @@ export function WorkspaceSearch({ onClose }: { onClose: () => void }) {
   async function run(notify = true) {
     const q = query.trim()
     if (!q || !root) return
+    // Last-ISSUED wins, not last-resolved: an older search resolving after a
+    // newer one must not overwrite fresher hits.
+    const seq = ++runSeq.current
     setSearching(true)
     try {
       const results = await tauri.workspaceSearch(root, q, caseSensitive, useRegex)
+      if (seq !== runSeq.current) return
       setHits(results)
       setIndex(0)
     } catch (e) {
+      if (seq !== runSeq.current) return
       // Invalid regex while typing is routine — show "No matches" quietly;
       // only an explicit Enter toasts the reason.
       setHits([])
       if (notify) useToast.getState().show(`Search: ${e}`)
     } finally {
-      setSearching(false)
+      if (seq === runSeq.current) setSearching(false)
     }
   }
 

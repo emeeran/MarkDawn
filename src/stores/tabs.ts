@@ -18,6 +18,12 @@ interface TabsStore {
   open: (path: string) => Promise<void>
   openUntitled: () => void
   close: (id: string) => Promise<void>
+  /** Point open tabs at a renamed/moved file (FileTree rename) so the next
+   *  autosave writes the new path instead of recreating the old one. */
+  retargetPath: (oldPath: string, newPath: string) => void
+  /** Drop tabs under a deleted/trashed directory — no saves (the files are
+   *  in the trash; saving would resurrect the tree). */
+  forgetTabsUnder: (path: string) => void
   reopenClosed: () => Promise<void>
   setActive: (id: string) => void
   setContent: (id: string, markdown: string) => void
@@ -147,6 +153,26 @@ export const useTabs = create<TabsStore>((setState, get) => ({
         activeId,
         closed: closedTab ? [closedTab, ...s.closed].slice(0, 10) : s.closed,
       }
+    })
+  },
+
+  retargetPath(oldPath, newPath) {
+    setState((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.path === oldPath
+          ? { ...t, path: newPath, title: newPath.split(/[\\/]/).pop() ?? t.title }
+          : t,
+      ),
+    }))
+  },
+
+  forgetTabsUnder(path) {
+    setState((s) => {
+      const tabs = s.tabs.filter((t) => !t.path || !t.path.startsWith(path))
+      const activeId = tabs.some((t) => t.id === s.activeId)
+        ? s.activeId
+        : (tabs.at(-1)?.id ?? null)
+      return { tabs, activeId }
     })
   },
 

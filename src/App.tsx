@@ -42,11 +42,16 @@ interface DiffRequest {
 const darkQuery = window.matchMedia('(prefers-color-scheme: dark)')
 
 /** Adopt the on-disk contents of `path` into a tab (external change or reload). */
-function reloadTabInto(path: string, tabId: string) {
+function reloadTabInto(path: string, tabId: string, notifyOnFailure = false) {
   void tauri
     .readFile(path)
     .then((md) => tauri.statMtime(path).then((mtime) => useTabs.getState().markSaved(tabId, md, mtime)))
-    .catch(() => {})
+    .catch((e) => {
+      if (notifyOnFailure) {
+        useToast.getState().show(`Cannot reload ${path}: ${e}`)
+        useTabs.getState().setBanner('This file changed on disk.')
+      }
+    })
 }
 
 function resolvedTheme(theme: ThemeId): string {
@@ -292,7 +297,7 @@ export function App() {
     if (active?.path) {
       const p = active.path
       t.clearStale(p)
-      reloadTabInto(p, active.id)
+      reloadTabInto(p, active.id, true)
     }
   }
 

@@ -141,11 +141,13 @@ export function MuyaEditor({ tab, onInput, onSelection }: Props) {
      * text/plain (WebKitGTK often exposes ONLY the last one).
      */
     function imagePathsFromClipboard(e: ClipboardEvent): string[] {
-      const raw = [
-        e.clipboardData?.getData('text/uri-list') ?? '',
-        e.clipboardData?.getData('x-special/gnome-copied-files') ?? '',
-        e.clipboardData?.getData('text/plain') ?? '',
-      ].join('\n')
+      const uriList = e.clipboardData?.getData('text/uri-list') ?? ''
+      const gnomeFiles = e.clipboardData?.getData('x-special/gnome-copied-files') ?? ''
+      const plain = e.clipboardData?.getData('text/plain') ?? ''
+      // text/plain only counts as an image carrier when it is the ONLY
+      // carrier — otherwise pasting the literal text "/tmp/photo.png" would
+      // be hijacked into a file import.
+      const raw = [uriList, gnomeFiles, uriList.trim() || gnomeFiles.trim() ? '' : plain].join('\n')
       const ext = /\.(png|jpe?g|gif|webp|svg)$/i
       const out = new Set<string>()
       for (const line of raw.split(/[\r\n]+/)) {

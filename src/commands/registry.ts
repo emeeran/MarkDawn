@@ -170,7 +170,12 @@ export function editOp(op: 'cut' | 'copy' | 'paste' | 'selectAll') {
   const selText = window.getSelection()?.toString() ?? ''
   const muyaText = muyaClipboardCopyCut(op)
   const text = pickCopySource(inEditor, muyaText, selText)
-  if (text) void tauri.clipboardWriteText(text).catch((e) => console.error('clip write', e))
+  if (text)
+    void tauri.clipboardWriteText(text).catch((e) =>
+      // The global handler would toast rejections, but this catch stops the
+      // propagation — surface it here or Ctrl+C silently copies nothing.
+      useToast.getState().show(`Copy failed: ${e}`),
+    )
 }
 
 /** Stream a report feature into the AI panel. Tone uses the selection when there is one. */

@@ -91,6 +91,9 @@ function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
     const newPath = await tauri.pathJoin(parent, trimmed)
     try {
       await tauri.rename(node.path, newPath)
+      // Retarget open tabs, or the next autosave would recreate the old file
+      // and the two copies would diverge.
+      useTabs.getState().retargetPath(node.path, newPath)
       await refresh(await tauri.pathDir(node.path))
     } catch (e) {
       useToast.getState().show(String(e))
@@ -98,6 +101,15 @@ function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
   }
 
   async function doDelete() {
+    if (node.isDir) {
+      const openCount = useTabs
+        .getState()
+        .tabs.filter((t) => t.path?.startsWith(node.path)).length
+      const what = openCount > 0 ? ` (with ${openCount} open tab${openCount > 1 ? 's' : ''})` : ''
+      if (!window.confirm(`Move directory "${node.name}"${what} to trash?`)) return
+      // Open tabs under it must go — saving them would resurrect the tree.
+      useTabs.getState().forgetTabsUnder(node.path)
+    }
     try {
       await tauri.trash(node.path)
       await refresh(await tauri.pathDir(node.path))

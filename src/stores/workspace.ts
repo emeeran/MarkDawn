@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { tauri } from '../lib/tauri'
+import { useToast } from './toast'
 import type { FileNode } from '../types'
 
 interface WorkspaceStore {
@@ -20,8 +21,11 @@ export const useWorkspace = create<WorkspaceStore>((setState, get) => ({
   async openRoot(path) {
     await tauri.fsAllow(path) // user-picked → consented, else read_dir is rejected
     // A failed watcher must not block opening the folder (e.g. inotify
-    // limits on huge trees) — degrade to unwatched.
-    await tauri.watchStart(path).catch(() => {})
+    // limits on huge trees) — degrade to unwatched, but say so: external
+    // edits will only be noticed on reload, not live.
+    await tauri.watchStart(path).catch((e) =>
+      useToast.getState().show(`Opened without change watching: ${e}`),
+    )
     setState({ root: path, expanded: new Set([path]) })
     await get().refresh(path)
   },

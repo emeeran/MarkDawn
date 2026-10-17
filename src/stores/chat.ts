@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { stream } from '../ai/client'
 import { tauri } from '../lib/tauri'
+import { useToast } from './toast'
 import type { ChatMessage } from '../types'
 
 const STORE = 'chat-history'
@@ -19,8 +20,16 @@ interface ChatStore {
 }
 
 /** Persist after every terminal state so history survives restarts. */
+let persistWarned = false
 function persist(messages: ChatMessage[]) {
-  void tauri.storeSet(STORE, { messages }).catch((e) => console.warn('chat history not saved:', e))
+  void tauri.storeSet(STORE, { messages }).catch((e) => {
+    // Console is invisible in a packaged app — toast once per session so the
+    // user knows history stopped persisting, without spamming every turn.
+    if (!persistWarned) {
+      persistWarned = true
+      useToast.getState().show(`Chat history will not be saved: ${e}`)
+    }
+  })
 }
 
 export const useChat = create<ChatStore>((setState, get) => ({
@@ -85,7 +94,10 @@ export const useChat = create<ChatStore>((setState, get) => ({
           const msgs = [...s.messages]
           const last = msgs[msgs.length - 1]
           if (last?.role === 'assistant') {
-            msgs[msgs.length - 1] = { ...last, content: `⚠ ${message}` }
+            // Keep the partial answer the model already delivered — replacing
+            // it with the error destroyed received output. Error appended.
+            const partial = last.content.trim()
+            msgs[msgs.length - 1] = { ...last, content: partial ? `${partial}\n\n⚠ ${message}` : `⚠ ${message}` }
           }
           persist(msgs)
           return { messages: msgs, streaming: false, cancel: null }
