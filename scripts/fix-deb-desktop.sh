@@ -1,7 +1,9 @@
 #!/bin/sh
 # Tauri's generated .desktop entry lacks "%f" in Exec, so "Open With →
 # MarkDawn" launches the app without the file. Patch the data archive inside
-# the built deb. Run after `tauri build --bundles deb`.
+# the built deb — and recompute control/md5sums, which a data-only repack
+# leaves stale (dpkg --verify would fail on every installed machine).
+# Run after `tauri build --bundles deb`.
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -22,6 +24,15 @@ fi
 sed -i 's|^Exec=markdawn$|Exec=markdawn %f|' "$desktop"
 
 tar -czf "$work/data.tar.gz" -C "$work" usr
+
+# Refresh md5sums for the file we just changed, then repack control.
+md5sums="$work/DEBIAN/md5sums"
+if [ -f "$md5sums" ]; then
+  new=$(md5sum "$desktop" | cut -d' ' -f1)
+  sed -i "s|^[0-9a-f]*  usr/share/applications/MarkDawn.desktop|$new  usr/share/applications/MarkDawn.desktop|" "$md5sums"
+  tar -czf "$work/control.tar.gz" -C "$work" DEBIAN
+fi
+
 # `ar r` replaces members in place, keeping debian-binary first (required).
 ar r "$deb" \
   "$work/debian-binary" \

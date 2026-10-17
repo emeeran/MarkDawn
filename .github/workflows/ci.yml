@@ -7,7 +7,7 @@ on:
 
 jobs:
   web:
-    name: Frontend (tsc + vitest)
+    name: Frontend (tsc + vitest + vite build)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,6 +18,9 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm test
+      # tsc alone misses asset/import-resolution errors that only surface
+      # when the bundle is actually produced.
+      - run: npx vite build
 
   rust:
     name: Rust (cargo test)
@@ -35,3 +38,37 @@ jobs:
       - name: Run tests
         run: cargo test
         working-directory: src-tauri
+
+  deb:
+    name: Deb bundle (build + desktop entry)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Build deb
+        run: npx tauri build --bundles deb
+      - name: Patch desktop entry (%f) and verify
+        run: |
+          scripts/fix-deb-desktop.sh
+          version=$(node -p "require('./package.json').version")
+          deb="src-tauri/target/release/bundle/deb/MarkDawn_${version}_amd64.deb"
+          work=$(mktemp -d)
+          ar x "$deb" --output="$work"
+          tar -xzf "$work/data.tar.gz" -C "$work"
+          grep -q '^Exec=markdawn %f' "$work/usr/share/applications/MarkDawn.desktop"
+          # md5sums must still verify after the repack (dpkg --verify clean).
+          current=$(md5sum "$work/usr/share/applications/MarkDawn.desktop" | cut -d' ' -f1)
+          pinned=$(tar -xzf "$work/control.tar.gz" -O DEBIAN/md5sums | grep 'MarkDawn.desktop' | cut -d' ' -f1)
+          [ "$current" = "$pinned" ]
