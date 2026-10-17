@@ -84,14 +84,13 @@ fn export_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
 fn edit_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
     let m = Submenu::new(app, "Edit", true)?;
     m.append_items(&[
-        // Real items, not PredefinedMenuItem::undo/redo — those are no-ops on
-        // Linux; undo/redo must reach the webview and drive Muya's history.
+        // Real items, not PredefinedMenuItem::* — those are no-ops on this
+        // Linux build; undo/redo must reach the webview and drive Muya's
+        // history, and clipboard ops run through the Rust clipboard bridge
+        // (see the command registry).
         &item(app, "edit.undo", "Undo", Some("CmdOrCtrl+Z"))?,
         &item(app, "edit.redo", "Redo", Some("Shift+CmdOrCtrl+Z"))?,
         &sep(app)?,
-        // Real items, not PredefinedMenuItem::cut/copy/paste/select_all — those
-        // are no-ops on Linux (same reason as undo/redo above). Handled in the
-        // command registry via the Rust clipboard bridge.
         &item(app, "edit.cut", "Cut", None)?,
         &item(app, "edit.copy", "Copy", None)?,
         &item(app, "edit.paste", "Paste", None)?,

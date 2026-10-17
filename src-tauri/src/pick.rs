@@ -15,6 +15,20 @@ pub struct Cmd<T> {
     pub error: Option<String>,
 }
 
+impl<T> Cmd<T> {
+    pub fn ok(value: T) -> Self {
+        Cmd { ok: true, value, error: None }
+    }
+}
+
+impl<T: Default> Cmd<T> {
+    /// Error result; the value is the type's default (the frontend reads it
+    /// only on ok).
+    pub fn err(error: impl Into<String>) -> Self {
+        Cmd { ok: false, value: T::default(), error: Some(error.into()) }
+    }
+}
+
 fn home() -> String {
     std::env::var("HOME").unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned())
 }
@@ -73,8 +87,8 @@ async fn pick(kind: &str, default_name: Option<String>) -> Result<Option<String>
 fn spawn_pick(kind: &'static str, default_name: Option<String>, on_result: Channel<Cmd<Option<String>>>) {
     tauri::async_runtime::spawn(async move {
         let out = match pick(kind, default_name).await {
-            Ok(v) => Cmd { ok: true, value: v, error: None },
-            Err(e) => Cmd { ok: false, value: None, error: Some(e) },
+            Ok(v) => Cmd::ok(v),
+            Err(e) => Cmd::err(e),
         };
         let _ = on_result.send(out);
     });

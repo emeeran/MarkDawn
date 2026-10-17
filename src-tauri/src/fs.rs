@@ -18,13 +18,11 @@ pub struct FileNode {
 
 pub struct WatchState {
     watcher: Option<RecommendedWatcher>,
-    #[allow(dead_code)] // handle kept alive so the collector thread stays joined-able
-    root: Option<PathBuf>,
 }
 
 /// Managed-state constructor (keeps internals private to this module).
 pub fn watch_state() -> WatchState {
-    WatchState { watcher: None, root: None }
+    WatchState { watcher: None }
 }
 
 /// Atomic write: temp file in the same directory, synced, then renamed over
@@ -84,10 +82,6 @@ fn normalize(p: &Path) -> PathBuf {
     out
 }
 
-fn is_within(root: &Path, p: &Path) -> bool {
-    p.starts_with(root)
-}
-
 /// Best-effort canonicalization: falls back to canonicalizing the deepest
 /// existing ancestor, so not-yet-created files resolve against a real root.
 /// ponytail: lexical normalize + ancestor canonicalize does not follow
@@ -120,7 +114,7 @@ impl FsGuard {
     fn check(&self, path: &Path) -> Result<(), String> {
         let c = canonicalize_best_effort(path);
         let roots = self.roots.lock().map_err(|e| e.to_string())?;
-        if roots.iter().any(|r| is_within(r, &c)) {
+        if roots.iter().any(|r| c.starts_with(r)) {
             Ok(())
         } else {
             Err(format!("path outside the allowed scope: {}", path.display()))
@@ -209,6 +203,14 @@ pub(crate) fn mtime_ms(path: &Path) -> Result<u64, String> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0))
+}
+
+/// Wall-clock milliseconds since the epoch (0 if the clock is before it).
+pub(crate) fn epoch_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// Conflict guard: when `expected` is Some, the file on disk must still carry
@@ -324,10 +326,7 @@ fn import_image_inner(
     let assets = doc_dir.join(format!("{stem}_assets"));
     fs::create_dir_all(&assets).map_err(|e| e.to_string())?;
     for i in 0..10_000u32 {
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0);
+        let stamp = epoch_ms();
         let name = if i == 0 {
             format!("image-{stamp}.{ext}")
         } else {
@@ -349,10 +348,7 @@ fn import_image_inner(
 pub fn save_recovery(app: AppHandle, title: String, contents: String) -> Result<String, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("recovery");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let stamp = epoch_ms() / 1000;
     let safe: String = title
         .chars()
         .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
@@ -679,7 +675,6 @@ pub fn watch_start(
 
     let mut st = state.lock().map_err(|e| e.to_string())?;
     st.watcher = Some(watcher); // dropping the old one un-watches it
-    st.root = Some(root_path);
     drop(st);
 
     // Watched trees may contain images the editor renders — allow the whole
@@ -725,7 +720,6 @@ fn is_own_temp_file(path: &str) -> bool {
 pub fn watch_stop(state: State<'_, Mutex<WatchState>>) {
     if let Ok(mut st) = state.lock() {
         st.watcher = None;
-        st.root = None;
     }
 }
 
@@ -782,10 +776,7 @@ fn read_json_preserving_corrupt<T: serde::de::DeserializeOwned>(path: &Path, def
     match serde_json::from_str(&s) {
         Ok(v) => v,
         Err(_) => {
-            let stamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or(0);
+            let stamp = epoch_ms();
             let _ = fs::rename(path, PathBuf::from(format!("{}.corrupt-{stamp}", path.display())));
             default
         }
@@ -913,8 +904,8 @@ pub fn workspace_search(
             }
         };
         let result = match out {
-            Ok(v) => crate::pick::Cmd { ok: true, value: v, error: None },
-            Err(e) => crate::pick::Cmd { ok: false, value: Vec::new(), error: Some(e) },
+            Ok(v) => crate::pick::Cmd::ok(v),
+            Err(e) => crate::pick::Cmd::err(e),
         };
         let _ = on_result.send(result);
     });

@@ -28,8 +28,8 @@ pub fn pandoc_available() -> bool {
 pub fn export_pandoc(src: String, format: String, on_result: Channel<Cmd<String>>) {
     tauri::async_runtime::spawn(async move {
         let out = match run_pandoc(src, format).await {
-            Ok(dest) => Cmd { ok: true, value: dest, error: None },
-            Err(e) => Cmd { ok: false, value: String::new(), error: Some(e) },
+            Ok(dest) => Cmd::ok(dest),
+            Err(e) => Cmd::err(e),
         };
         let _ = on_result.send(out);
     });

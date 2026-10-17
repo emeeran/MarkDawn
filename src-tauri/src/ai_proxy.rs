@@ -18,9 +18,11 @@ pub enum AiEvent {
 
 #[derive(Deserialize)]
 pub struct AiMessage {
-    pub role: String, // "user" | "assistant" | "system"
+    pub role: String,
     pub content: String,
 }
+
+const DEFAULT_OLLAMA: &str = "http://localhost:11434";
 
 #[derive(Deserialize)]
 pub struct AiRequest {
@@ -41,7 +43,7 @@ fn default_max_chars() -> usize {
     16_000
 }
 fn default_ollama_url() -> String {
-    "http://localhost:11434".into()
+    DEFAULT_OLLAMA.into()
 }
 
 /// Registry of in-flight streams so the webview can cancel them.
@@ -53,7 +55,6 @@ pub struct Streams {
     cancelled: Arc<Mutex<HashSet<String>>>,
 }
 
-/// Managed-state constructor.
 pub fn streams() -> Streams {
     Streams::default()
 }
@@ -151,11 +152,19 @@ pub fn ai_cancel(id: String, streams: State<'_, Streams>) {
     }
 }
 
-const DEFAULT_OLLAMA: &str = "http://localhost:11434";
+/// Build an Ollama REST endpoint from the validated base URL.
+fn ollama_endpoint(base: &reqwest::Url, path: &str) -> String {
+    format!(
+        "{}://{}{}/api/{path}",
+        base.scheme(),
+        base.host_str().unwrap_or_default(),
+        base.port_or_known_default().map(|p| format!(":{p}")).unwrap_or_default()
+    )
+}
 
 async fn ollama_tags(base: &str) -> Result<Vec<String>, String> {
     let base = validate_ollama_url(base)?;
-    let url = format!("{}://{}{}/api/tags", base.scheme(), base.host_str().unwrap_or_default(), base.port_or_known_default().map(|p| format!(":{p}")).unwrap_or_default());
+    let url = ollama_endpoint(&base, "tags");
     let resp = client()?
         .get(&url)
         .timeout(Duration::from_secs(3))
@@ -176,20 +185,8 @@ async fn ollama_tags(base: &str) -> Result<Vec<String>, String> {
         .unwrap_or_default())
 }
 
-/// Model listing via Channel — async-command responses don't resolve on this
-/// WebKitGTK build, so sync command + spawned task + Channel.
-#[tauri::command]
-pub fn ollama_models(ollama_url: Option<String>, on_result: Channel<crate::pick::Cmd<Vec<String>>>) {
-    tauri::async_runtime::spawn(async move {
-        let out = match ollama_tags(ollama_url.as_deref().unwrap_or(DEFAULT_OLLAMA)).await {
-            Ok(v) => crate::pick::Cmd { ok: true, value: v, error: None },
-            Err(e) => crate::pick::Cmd { ok: false, value: Vec::new(), error: Some(e) },
-        };
-        let _ = on_result.send(out);
-    });
-}
-
 /// List available models for a provider, powering the Settings model selector.
+/// Channel — async-command responses don't resolve on this WebKitGTK build.
 #[tauri::command]
 pub fn fetch_models(
     provider: String,
@@ -198,8 +195,8 @@ pub fn fetch_models(
 ) {
     tauri::async_runtime::spawn(async move {
         let out = match list_models(provider, ollama_url).await {
-            Ok(v) => crate::pick::Cmd { ok: true, value: v, error: None },
-            Err(e) => crate::pick::Cmd { ok: false, value: Vec::new(), error: Some(e) },
+            Ok(v) => crate::pick::Cmd::ok(v),
+            Err(e) => crate::pick::Cmd::err(e),
         };
         let _ = on_result.send(out);
     });
@@ -506,7 +503,7 @@ async fn stream_openai_compatible(
 
 async fn stream_ollama(req: &AiRequest, ch: &Channel<AiEvent>) -> Result<(), String> {
     let base = validate_ollama_url(&req.ollama_url)?;
-    let url = format!("{}://{}{}/api/chat", base.scheme(), base.host_str().unwrap_or_default(), base.port_or_known_default().map(|p| format!(":{p}")).unwrap_or_default());
+    let url = ollama_endpoint(&base, "chat");
     let body = serde_json::json!({
         "model": req.model,
         "stream": true,

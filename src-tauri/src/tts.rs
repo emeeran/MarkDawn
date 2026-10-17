@@ -47,8 +47,13 @@ fn edge_tts_path() -> std::path::PathBuf {
 
 /// Kill any synth/player children. Called from Stop and from app exit
 /// (children used to survive the app).
-pub fn shutdown(state: &TtsState) {
-    stop_internal(state);
+pub fn stop_internal(state: &TtsState) {
+    if let Ok(mut s) = state.synth.lock() {
+        kill_locked(&mut s);
+    }
+    if let Ok(mut p) = state.player.lock() {
+        kill_locked(&mut p);
+    }
 }
 
 /// Off-thread with a hard timeout (same pattern as the clipboard commands in
@@ -96,8 +101,8 @@ pub fn tts_voices(on_result: Channel<Cmd<Vec<String>>>) {
         })
         .await;
         let out = match out {
-            Ok(v) => Cmd { ok: true, value: v, error: None },
-            Err(e) => Cmd { ok: false, value: Vec::new(), error: Some(e) },
+            Ok(v) => Cmd::ok(v),
+            Err(e) => Cmd::err(e),
         };
         let _ = on_result.send(out);
     });
@@ -106,15 +111,6 @@ pub fn tts_voices(on_result: Channel<Cmd<Vec<String>>>) {
 fn kill_locked(slot: &mut Option<Child>) {
     if let Some(mut child) = slot.take() {
         let _ = child.start_kill();
-    }
-}
-
-fn stop_internal(state: &TtsState) {
-    if let Ok(mut s) = state.synth.lock() {
-        kill_locked(&mut s);
-    }
-    if let Ok(mut p) = state.player.lock() {
-        kill_locked(&mut p);
     }
 }
 
@@ -142,8 +138,8 @@ pub fn tts_synth(
     tauri::async_runtime::spawn(async move {
         let state = app.state::<TtsState>();
         let out = match synth_inner(&text, voice, rate, pitch, volume, &state).await {
-            Ok(path) => Cmd { ok: true, value: path.to_string_lossy().into_owned(), error: None },
-            Err(e) => Cmd { ok: false, value: String::new(), error: Some(e) },
+            Ok(path) => Cmd::ok(path.to_string_lossy().into_owned()),
+            Err(e) => Cmd::err(e),
         };
         let _ = on_result.send(out);
     });
@@ -158,8 +154,8 @@ pub fn tts_play(app: AppHandle, mp3: String, on_result: Channel<Cmd<String>>) {
     tauri::async_runtime::spawn(async move {
         let state = app.state::<TtsState>();
         let out = match play_inner(std::path::Path::new(&mp3), &state).await {
-            Ok(player) => Cmd { ok: true, value: player, error: None },
-            Err(e) => Cmd { ok: false, value: String::new(), error: Some(e) },
+            Ok(player) => Cmd::ok(player),
+            Err(e) => Cmd::err(e),
         };
         let _ = on_result.send(out);
     });
@@ -201,10 +197,7 @@ async fn synth_inner(
     }
     cleanup_old_temp_files();
 
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
+    let stamp = crate::fs::epoch_ms();
     let dir = std::env::temp_dir();
     // predictable-name + symlink-following + never-cleaned: fixed by using an
     // exclusive per-request name and a janitor sweep (below).

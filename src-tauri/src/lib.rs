@@ -71,7 +71,6 @@ pub fn run() {
             secrets::secret_status,
             ai_proxy::ai_stream,
             ai_proxy::ai_cancel,
-            ai_proxy::ollama_models,
             ai_proxy::fetch_models,
             export::pandoc_available,
             export::export_pandoc,
@@ -96,7 +95,7 @@ pub fn run() {
                 // Children (synth/player) used to outlive the app.
                 if let Some(w) = app.get_webview_window("main") {
                     let state = w.app_handle().state::<tts::TtsState>();
-                    tts::shutdown(&state);
+                    tts::stop_internal(&state);
                 }
             }
         });
