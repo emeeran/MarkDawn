@@ -50,6 +50,9 @@ export type ThemeId = 'auto' | 'github' | 'night' | 'newsprint' | 'pixyll'
 export type TextAlignment = 'left' | 'center' | 'right' | 'justify'
 
 export interface Settings {
+  /** Persisted-schema version. Nothing branches on it yet; its job is to make
+   *  a future BREAKING settings change a keyed migration instead of a guess. */
+  schemaVersion: 1
   theme: ThemeId
   fontSize: number
   editorFont: string
@@ -81,6 +84,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
+  schemaVersion: 1,
   theme: 'auto',
   fontSize: 16,
   editorFont: '',

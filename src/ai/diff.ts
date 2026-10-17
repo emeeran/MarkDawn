@@ -5,11 +5,24 @@ export type DiffOp = { type: 'same' | 'del' | 'add'; text: string }
  * ponytail: O(n·m) on word tokens — fine for selections (≤ a few thousand
  * words). Swap for a Myers diff if whole documents ever flow through here.
  */
+
+/** Above n·m the (n+1)×(m+1) table approaches a renderer-crashing
+ *  allocation (a 10k-word expand ≈ 400 MB) — degrade to a whole-span
+ *  replace instead, which is always correct, just not minimal. */
+const LCS_CELL_CAP = 4_000_000
+
 export function wordDiff(oldText: string, newText: string): DiffOp[] {
   const a = tokenize(oldText)
   const b = tokenize(newText)
   const n = a.length
   const m = b.length
+
+  if (n * m > LCS_CELL_CAP) {
+    const ops: DiffOp[] = []
+    if (n > 0) push(ops, 'del', a.join(''))
+    if (m > 0) push(ops, 'add', b.join(''))
+    return ops
+  }
 
   // LCS length table. Tokens carry trailing whitespace, so equality is on the
   // word core only ("hello" ≡ "hello ").

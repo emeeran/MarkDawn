@@ -136,7 +136,15 @@ pub fn ai_stream(
             // Cancel arrived between spawn and registration.
             handle.abort();
         } else {
-            active.insert(id, handle);
+            active.insert(id.clone(), handle);
+            // Re-check: a cancel that landed between our remove() and this
+            // insert() found no handle and aborted nothing — it lives in the
+            // set only until we look again here.
+            if streams.cancelled.lock().map_err(|e| e.to_string())?.remove(&id) {
+                if let Some(h) = active.remove(&id) {
+                    h.abort();
+                }
+            }
         }
     }
     Ok(())

@@ -851,10 +851,8 @@ pub fn recent_get(app: AppHandle) -> Result<Vec<String>, String> {
 #[tauri::command]
 pub fn recent_push(app: AppHandle, path: String) -> Result<(), String> {
     let file = config_path(&app, "recent.json")?;
-    let mut list: Vec<String> = fs::read_to_string(&file)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default();
+    // Same corruption policy as recent_get: preserve, don't silently reset.
+    let mut list: Vec<String> = read_json_preserving_corrupt(&file, Vec::new());
     list.retain(|p| p != &path);
     list.insert(0, path);
     list.truncate(15);
