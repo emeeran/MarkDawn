@@ -31,6 +31,7 @@ pub fn run() {
             menu::install(&handle)?;
             fs::seed_guard(&handle);
             lifecycle::init_startup_files();
+            tts::cleanup_old_temp_files(); // janitor also runs per synth
             Ok(())
         })
         .manage(ai_proxy::streams())
@@ -54,6 +55,7 @@ pub fn run() {
             fs::clipboard_write_text,
             fs::clipboard_read_text,
             fs::save_recovery,
+            fs::recovery_list,
             fs::watch_start,
             fs::watch_stop,
             fs::recent_get,
@@ -84,6 +86,8 @@ pub fn run() {
             tts::tts_stop,
             lifecycle::startup_files,
             lifecycle::quit_now,
+            lifecycle::quit_extend,
+            lifecycle::quit_disarm,
         ])
         .build(tauri::generate_context!())
         .expect("error while building MarkDawn")
@@ -92,11 +96,9 @@ pub fn run() {
                 lifecycle::handle_exit_requested(app, code, api);
             }
             if let RunEvent::Exit = event {
-                // Children (synth/player) used to outlive the app.
-                if let Some(w) = app.get_webview_window("main") {
-                    let state = w.app_handle().state::<tts::TtsState>();
-                    tts::stop_internal(&state);
-                }
+                // Children (synth/player) used to outlive the app. State is
+                // reached via the AppHandle — the window may already be gone.
+                tts::stop_internal(&app.state::<tts::TtsState>());
             }
         });
 }

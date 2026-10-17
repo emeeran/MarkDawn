@@ -111,9 +111,15 @@ export const tauri = {
   startupFiles: () => invoke<string[]>('startup_files'),
   /** Exit after the webview flushed pending saves (see quit-requested). */
   quitNow: () => invoke<void>('quit_now'),
+  /** Push the force-exit watchdog deadline out while a flush is running. */
+  quitExtend: () => invoke<void>('quit_extend'),
+  /** Cancel the watchdog: the flush refused to quit (failed saves). */
+  quitDisarm: () => invoke<void>('quit_disarm'),
   /** Last-resort save for dirty untitled tabs during quit. */
   saveRecovery: (title: string, contents: string) =>
     invoke<string>('save_recovery', { title, contents }),
+  /** Unrestored recovery files from previous sessions (stale ones pruned). */
+  recoveryList: () => invoke<string[]>('recovery_list'),
 
   /** Copy a dropped/picked image next to the document; returns the relative path. */
   imageImport: (docDir: string, src: string) =>

@@ -47,13 +47,21 @@ pub(crate) fn atomic_write(path: &Path, contents: &str) -> Result<(), String> {
         let _ = fs::remove_file(&tmp);
         return Err(e.to_string());
     }
+    // fsync the directory: without it the rename itself can be lost to a
+    // power cut on ext4 (file fsynced, directory entry not yet durable).
+    if let Ok(d) = fs::File::open(dir) {
+        let _ = d.sync_all();
+    }
     Ok(())
 }
 
 /// Confinement: which paths the webview may touch through fs commands.
 /// Seeded with the app's own config/data dirs; grown via `fs_allow` when the
 /// user picks a file/folder, opens a workspace, or drops/launches into a file.
-/// Without this, any script in the webview reads/writes the whole disk.
+/// Honest ceiling: `fs_allow` is itself webview-callable, so this stops
+/// ACCIDENTAL webview bugs from touching the whole disk — it is not a
+/// defense against a compromised renderer (see AUDIT.md's open question on
+/// moving allowances behind the picker commands).
 pub struct FsGuard {
     roots: Arc<Mutex<Vec<PathBuf>>>,
 }
@@ -108,7 +116,7 @@ impl FsGuard {
         }
     }
 
-    fn check(&self, path: &Path) -> Result<(), String> {
+    pub(crate) fn check(&self, path: &Path) -> Result<(), String> {
         let c = canonicalize_best_effort(path);
         let roots = self.roots.lock().map_err(|e| e.to_string())?;
         if roots.iter().any(|r| c.starts_with(r)) {
@@ -130,18 +138,16 @@ pub fn fs_allow(app: AppHandle, path: String) -> Result<(), String> {
     let guard = app.state::<FsGuard>();
     guard.allow(&p);
     let c = canonicalize_best_effort(&p);
-    // Display-time image resolution goes through asset:// — extend its scope
-    // too (recursive so `<doc>_assets/` subdirectories resolve).
-    let scope = app.asset_protocol_scope();
     if c.is_dir() {
-        let _ = scope.allow_directory(&c, true);
         guard.allow(&c); // read_dir on the folder itself
-    } else {
-        let _ = scope.allow_file(&c);
-        if let Some(parent) = c.parent() {
-            let _ = scope.allow_directory(parent, true);
-            guard.allow(parent);
-        }
+    } else if let Some(parent) = c.parent() {
+        // The parent is granted because image import writes `<dir>_assets/`
+        // next to the document and save-as targets siblings. Known ceiling:
+        // this makes the fs grant directory-wide, not file-scoped (see the
+        // FsGuard doc comment). No asset-protocol scope is granted — image
+        // display goes through guarded data: URLs, and a recursive asset
+        // grant here used to expose the whole tree to `asset://` reads.
+        guard.allow(parent);
     }
     Ok(())
 }
@@ -388,6 +394,37 @@ pub fn save_recovery(app: AppHandle, title: String, contents: String) -> Result<
     let path = dir.join(format!("{safe}-{stamp}.md"));
     fs::write(&path, contents).map_err(|e| e.to_string())?;
     Ok(path.to_string_lossy().to_string())
+}
+
+/// List saved recovery files, oldest-pruned: entries older than 30 days are
+/// removed (recovery used to be write-only — nothing ever surfaced it back
+/// to the user). Newest first; the frontend offers restore/discard on launch.
+#[tauri::command]
+pub fn recovery_list(app: AppHandle) -> Vec<String> {
+    let Ok(dir) = app.path().app_data_dir().map(|d| d.join("recovery")) else {
+        return Vec::new();
+    };
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let cutoff = std::time::SystemTime::now() - Duration::from_secs(30 * 24 * 3600);
+    let mut files: Vec<(std::time::SystemTime, PathBuf)> = entries
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "md"))
+        .filter_map(|e| {
+            let modified = e.metadata().ok()?.modified().ok()?;
+            if modified < cutoff {
+                let _ = fs::remove_file(e.path()); // prune stale recoveries
+                return None;
+            }
+            Some((modified, e.path()))
+        })
+        .collect();
+    files.sort_by(|a, b| b.0.cmp(&a.0));
+    files
+        .into_iter()
+        .map(|(_, p)| p.to_string_lossy().to_string())
+        .collect()
 }
 
 // --- clipboard image paste ---------------------------------------------------
@@ -731,12 +768,6 @@ pub fn watch_start(
     let mut st = state.lock().map_err(|e| e.to_string())?;
     st.watcher = Some(watcher); // dropping the old one un-watches it
     drop(st);
-
-    // Watched trees may contain images the editor renders — allow the whole
-    // asset scope for the workspace (recursive).
-    let _ = app2
-        .asset_protocol_scope()
-        .allow_directory(&canonicalize_best_effort(Path::new(&root)), true);
 
     // Collector thread: batch paths, emit at most every 300 ms of quiet.
     std::thread::spawn(move || {

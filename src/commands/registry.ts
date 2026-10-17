@@ -60,17 +60,24 @@ export async function openFolderViaPicker() {
 const openFile = openFileViaPicker
 const openFolder = openFolderViaPicker
 
+/** Escape for HTML text content / attribute-ish positions in the export
+ *  template. The body goes through DOMPurify; the title and TOC entries are
+ *  raw document-derived strings and must not. */
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!)
+}
+
 async function exportHtml() {
   const { tabs, activeId } = useTabs.getState()
   const title = tabs.find((t) => t.id === activeId)?.title ?? 'document'
   const body = renderToStaticHTML(getMarkdown())
   const toc = getTOC()
   const tocHtml = toc.length
-    ? `<nav class="toc">${toc.map((t) => `<div class="toc-${t.lvl}"><a href="#${t.githubSlug}">${t.content}</a></div>`).join('')}</nav>`
+    ? `<nav class="toc">${toc.map((t) => `<div class="toc-${t.lvl}"><a href="#${t.githubSlug}">${escapeHtml(t.content)}</a></div>`).join('')}</nav>`
     : ''
   const theme = useSettings.getState().theme
   const html = `<!doctype html>
-<html><head><meta charset="utf-8"><title>${title}</title><style>
+<html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>
 ${themeRaw[theme] ?? themeRaw.github}
 body{max-width:800px;margin:0 auto;padding:48px 24px;line-height:1.6}
 .toc{border:1px solid #ddd;border-radius:6px;padding:12px 16px;margin:24px 0}
@@ -83,12 +90,14 @@ body{max-width:800px;margin:0 auto;padding:48px 24px;line-height:1.6}
     return null
   })
   if (!path) return
-  // Match pandoc's export guard: refuse to clobber an existing destination.
-  if (await tauri.readFile(path).then(() => true).catch(() => false)) {
-    return useToast.getState().show(`Export: ${path} already exists — remove or rename it first`)
-  }
   try {
     await tauri.fsAllow(path)
+    // Match pandoc's export guard: refuse to clobber an existing destination.
+    // Probed with statMtime AFTER fsAllow — a pre-allow readFile probe reads
+    // "absent" for an out-of-scope existing file and would clobber it.
+    if (await tauri.statMtime(path).then(() => true).catch(() => false)) {
+      return useToast.getState().show(`Export: ${path} already exists — remove or rename it first`)
+    }
     await tauri.writeFile(path, html)
     useToast.getState().show(`Exported ${path}`)
   } catch (e) {

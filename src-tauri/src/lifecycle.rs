@@ -1,11 +1,16 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::OnceLock;
 use tauri::{AppHandle, Emitter};
 
 /// Force-exit fallback: once a quit is intercepted and handed to the webview
-/// to flush saves, this is armed; if the webview never answers (crashed),
-/// we exit anyway after a delay rather than hanging the app.
+/// to flush saves, this is armed with a deadline; a live webview extends the
+/// deadline while it flushes (`quit_extend`) and a slow-but-alive flush is
+/// never killed. If the webview never answers (crashed), the deadline passes
+/// and we exit anyway rather than hanging the app. `quit_disarm` cancels the
+/// whole thing when the webview REFUSES to quit (failed saves) — the buffers
+/// the flush protects must not be destroyed by the guard itself.
 pub static QUIT_ARMED: AtomicBool = AtomicBool::new(false);
+static QUIT_DEADLINE_MS: AtomicU64 = AtomicU64::new(0);
 static STARTUP_FILES: OnceLock<Vec<String>> = OnceLock::new();
 
 /// Document extensions we accept from argv ("Open With" passes any of these).
@@ -43,6 +48,31 @@ pub fn quit_now(app: AppHandle) {
     app.exit(0);
 }
 
+/// Extend the force-exit deadline. The webview calls this on an interval
+/// while its flush is running, so a slow-but-alive flush is never killed;
+/// a dead webview stops extending and the deadline passes.
+#[tauri::command]
+pub fn quit_extend() {
+    extend_deadline();
+}
+
+/// Cancel the pending force-exit without exiting: the webview refused to
+/// quit (failed saves). Arming the guard must never destroy the very buffers
+/// it protects.
+#[tauri::command]
+pub fn quit_disarm() {
+    QUIT_ARMED.store(false, Ordering::SeqCst);
+}
+
+fn extend_deadline() {
+    QUIT_DEADLINE_MS.store(
+        crate::fs::epoch_ms() + FORCE_EXIT_AFTER_MS,
+        Ordering::SeqCst,
+    );
+}
+
+const FORCE_EXIT_AFTER_MS: u64 = 3_000;
+
 /// Intercept a user quit (no explicit exit code), tell the webview to flush
 /// debounced saves, then exit when it answers `quit_now` (or force-exit after
 /// a grace period if the webview is dead).
@@ -52,14 +82,20 @@ pub fn handle_exit_requested(app: &AppHandle, code: Option<i32>, api: &tauri::Ex
     }
     let already_armed = QUIT_ARMED.swap(true, Ordering::SeqCst);
     if !already_armed {
+        extend_deadline();
         let handle = app.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_secs(3));
-            if QUIT_ARMED.load(Ordering::SeqCst) {
-                // Webview never answered — exit anyway.
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            if !QUIT_ARMED.load(Ordering::SeqCst) {
+                return; // disarmed or already exited
+            }
+            if crate::fs::epoch_ms() >= QUIT_DEADLINE_MS.load(Ordering::SeqCst) {
+                // Webview never answered (and stopped extending) — exit anyway.
                 handle.exit(1);
             }
         });
+    } else {
+        extend_deadline();
     }
     api.prevent_exit();
     let _ = app.emit("quit-requested", ());

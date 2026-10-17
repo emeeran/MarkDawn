@@ -77,13 +77,15 @@ fn validate_ollama_url(url: &str) -> Result<reqwest::Url, String> {
         return Err("Ollama URL must be http(s)".into());
     }
     let host = u.host_str().unwrap_or_default().to_lowercase();
+    // Note: link-local 169.254.0.0/16 is deliberately NOT allowed — it hosts
+    // cloud-metadata services (169.254.169.254) on VM sessions, and no one
+    // runs Ollama on a link-local address.
     let ok = host == "localhost"
         || host.ends_with(".localhost")
         || host == "::1"
         || host.starts_with("127.")
         || host.starts_with("10.")
         || host.starts_with("192.168.")
-        || host.starts_with("169.254.")
         || host.starts_with("[::1]")
         // 172.16.0.0 – 172.31.255.255
         || host

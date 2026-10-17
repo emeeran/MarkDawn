@@ -11,6 +11,7 @@ import { isReading } from './ai/tts'
 import { FORMAT_ACTIONS, PARAGRAPH_ACTIONS } from './editor/inserts'
 import { MuyaEditor } from './editor/MuyaEditor'
 import { editOp, getCommands, openFolderViaPicker, openFileViaPicker } from './commands/registry'
+import { quitFlow as quit } from './lib/quit'
 import { tauri } from './lib/tauri'
 import { ChatPanel } from './panels/ChatPanel'
 import { CommandPalette } from './panels/CommandPalette'
@@ -52,23 +53,16 @@ function resolvedTheme(theme: ThemeId): string {
   return theme === 'auto' ? (darkQuery.matches ? 'night' : 'github') : theme
 }
 
-/** Guard across re-renders: the flush must happen exactly once per quit. */
-let quitting = false
-
-async function quitFlow() {
-  if (quitting) return
-  quitting = true
-  flushPendingEmit() // the editor's 80ms emit tail belongs to this flush
-  const { failed } = await useTabs.getState().flushAll()
-  if (failed.length > 0) {
-    // The dirty buffers are the only copy of that text — refuse to exit.
-    // quitting resets so the user can retry once the disk problem is fixed.
-    quitting = false
-    useToast.getState().show(`Not quitting — save failed: ${failed.join(', ')}`)
-    return
-  }
-  await tauri.quitNow().catch(() => {
-    quitting = false // quit didn't happen — allow a later retry to flush
+/** Flush saves, then really exit; refuse (and disarm the Rust watchdog) on
+ *  any failed save. Rules live in lib/quit so they stay testable. */
+function quitFlow() {
+  return quit({
+    flush: () => useTabs.getState().flushAll(),
+    quit: () => tauri.quitNow(),
+    disarm: () => tauri.quitDisarm(),
+    extend: () => tauri.quitExtend(),
+    onBlocked: (failed) =>
+      useToast.getState().show(`Not quitting — save failed: ${failed.join(', ')}`),
   })
 }
 
@@ -79,6 +73,7 @@ export function App() {
 
   const [toc, setToc] = useState<ITocItem[]>([])
   const [recents, setRecents] = useState<string[]>([])
+  const [recoverFiles, setRecoverFiles] = useState<string[]>([])
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [aboutOpen, setAboutOpen] = useState(false)
   const [selUi, setSelUi] = useState<{ text: string; rect: SelectionInfo['rect'] }>({ text: '', rect: null })
@@ -96,13 +91,19 @@ export function App() {
     void settings.load()
     void useChat.getState().load()
     void tauri.recentGet().then(setRecents).catch(() => {})
+    // Untitled work recovered at quit is useless if it is never offered back.
+    void tauri.recoveryList().then(setRecoverFiles).catch(() => {})
     const unlisteners = [
       listen<string>('open-path', (e) => void useTabs.getState().open(e.payload)),
       listen<string[]>('fs-changed', (e) => handleFsChanged(e.payload)),
       // Native menu (accelerators live Rust-side; no duplicate JS keybindings).
       listen<string>('menu-action', (e) => dispatchMenuAction(e.payload)),
-      // Rust intercepted the quit; flush saves, then really exit.
-      listen('quit-requested', () => void quitFlow()),
+      // Rust intercepted the quit; flush the editor's 80ms emit tail, then
+      // run the flush-then-exit contract.
+      listen('quit-requested', () => {
+        flushPendingEmit()
+        void quitFlow()
+      }),
     ]
     // Files from the very first launch (`notepad foo.md`).
     void tauri
@@ -238,6 +239,29 @@ export function App() {
     void tauri.recentClear().catch((e) => useToast.getState().show(`Clear recents: ${e}`))
   }
 
+  /** Open each recovery file as an untitled tab, then drop the backup (it
+   *  is now the user's live buffer). */
+  async function restoreRecoveries(paths: string[]) {
+    for (const p of paths) {
+      try {
+        const md = await tauri.readFile(p)
+        useTabs.getState().openUntitled()
+        const tab = useTabs.getState().tabs.at(-1)
+        if (tab) useTabs.getState().setContent(tab.id, md)
+        await tauri.trash(p).catch(() => {})
+      } catch (e) {
+        useToast.getState().show(`Recovery: ${e}`)
+        return
+      }
+    }
+    setRecoverFiles([])
+  }
+
+  async function discardRecoveries(paths: string[]) {
+    for (const p of paths) await tauri.trash(p).catch(() => {})
+    setRecoverFiles([])
+  }
+
   function handleFsChanged(paths: string[]) {
     const dirs = new Set(paths.map((p) => p.split(/[\\/]/).slice(0, -1).join('/')).filter(Boolean))
     dirs.forEach((d) => void useWorkspace.getState().refresh(d))
@@ -350,6 +374,18 @@ export function App() {
                 <button onClick={() => activeTab && useTabs.getState().keepMine(activeTab.id)}>
                   Keep mine
                 </button>
+              </span>
+            </div>
+          )}
+          {recoverFiles.length > 0 && (
+            <div className="banner">
+              <span>
+                {recoverFiles.length === 1 ? 'An untitled document' : `${recoverFiles.length} untitled documents`}{' '}
+                from a previous session was recovered.
+              </span>
+              <span className="banner-actions">
+                <button onClick={() => void restoreRecoveries(recoverFiles)}>Open</button>
+                <button onClick={() => void discardRecoveries(recoverFiles)}>Discard</button>
               </span>
             </div>
           )}

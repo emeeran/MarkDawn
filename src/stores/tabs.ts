@@ -121,7 +121,19 @@ export const useTabs = create<TabsStore>((setState, get) => ({
       const result = await get().saveById(id)
       if (result === 'failed') return // save failed — keep the tab open
     }
-    // A dirty tab that never had a path is scratch — closing discards it.
+    // A dirty tab that never had a path has no file to save to — write the
+    // recovery copy the quit path uses, so closing never silently destroys
+    // the only copy of the text.
+    const t2 = get().tabs.find((t) => t.id === id)
+    if (t2?.dirty && !t2.path) {
+      try {
+        const where = await tauri.saveRecovery(t2.title, t2.markdown)
+        useToast.getState().show(`Untitled work saved to ${where}`)
+      } catch (e) {
+        useToast.getState().show(`Close cancelled — could not save untitled work: ${e}`)
+        return
+      }
+    }
     setState((s) => {
       // Re-read: Save-As may have changed path/title.
       const t = s.tabs.find((t) => t.id === id)
@@ -197,9 +209,14 @@ export const useTabs = create<TabsStore>((setState, get) => ({
     setState((s) => ({
       tabs: s.tabs.map((t) => {
         if (t.id !== id) return t
-        // If the user typed while the save was in flight, keep the tab dirty —
-        // silently adopting the older snapshot would drop those edits.
-        if (t.markdown !== markdown) return t
+        if (t.markdown !== markdown) {
+          // The user typed while the save was in flight: keep the tab dirty —
+          // silently adopting the older snapshot would drop those edits. But
+          // the on-disk mtime is OUR OWN write's, so adopt it anyway — keeping
+          // the pre-save mtime would make the next autosave conflict against
+          // our own write and halt the chain.
+          return { ...t, dirty: true, ...(mtime !== undefined ? { mtime } : {}) }
+        }
         return { ...t, dirty: false, ...(mtime !== undefined ? { mtime } : {}) }
       }),
     }))
@@ -339,7 +356,9 @@ export const useTabs = create<TabsStore>((setState, get) => ({
           const where = await tauri.saveRecovery(tab.title, tab.markdown)
           recovered.push(where)
         } catch {
-          /* last resort failed — nothing more we can do */
+          // The recovery write is that tab's only copy — a failure here must
+          // block quitting exactly like a failed named-tab save.
+          failed.push(`${tab.title} (recovery write failed)`)
         }
       }
     }

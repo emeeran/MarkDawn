@@ -26,7 +26,27 @@ pub fn pandoc_available() -> bool {
 /// Convert a saved Markdown file with pandoc. Channel-delivered (async
 /// responses don't resolve on this build). Value = destination path.
 #[command]
-pub fn export_pandoc(src: String, format: String, on_result: Channel<Cmd<String>>) {
+pub fn export_pandoc(
+    src: String,
+    format: String,
+    on_result: Channel<Cmd<String>>,
+    guard: tauri::State<'_, crate::fs::FsGuard>,
+) {
+    // Same confinement as every other file-touching command: both the read
+    // and the write must be inside the consented scope. Checked before the
+    // spawn (State cannot cross it).
+    let check = (|guard: &crate::fs::FsGuard| -> Result<(), String> {
+        let dest = match src.rsplit_once('.') {
+            Some((stem, _)) => format!("{stem}.{format}"),
+            None => format!("{src}.{format}"),
+        };
+        guard.check(&std::path::PathBuf::from(&src))?;
+        guard.check(&std::path::PathBuf::from(&dest))
+    })(&guard);
+    if let Err(e) = check {
+        let _ = on_result.send(Cmd::err(e));
+        return;
+    }
     tauri::async_runtime::spawn(async move {
         let out = match run_pandoc(src, format).await {
             Ok(dest) => Cmd::ok(dest),
@@ -46,14 +66,22 @@ async fn run_pandoc(src: String, format: String) -> Result<String, String> {
         Some((stem, _)) => format!("{stem}.{format}"),
         None => format!("{src}.{format}"),
     };
+    let dest_path = std::path::PathBuf::from(&dest);
     // Never silently clobber an existing file the user may care about.
-    if std::path::Path::new(&dest).exists() {
+    if dest_path.exists() {
         return Err(format!("{dest} already exists — remove or rename it first"));
     }
-    let dest2 = dest.clone();
+    // Atomic-ish: pandoc writes a temp file in the destination directory and
+    // it is renamed over the target only on success (a failed pandoc must not
+    // leave a partial document behind).
+    let tmp = dest_path.with_extension(format!("pandoc-tmp.{format}"));
+    let _ = std::fs::remove_file(&tmp);
+    let tmp2 = tmp.clone();
     let out = tokio::task::spawn_blocking(move || {
         std::process::Command::new("pandoc")
-            .args(["-f", "markdown", "-t", &format, "-o", &dest2, &src])
+            .args(["-f", "markdown", "-t", &format, "-o"])
+            .arg(&tmp2)
+            .arg(&src)
             .output()
     })
     .await
@@ -62,7 +90,12 @@ async fn run_pandoc(src: String, format: String) -> Result<String, String> {
 
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
+        let _ = std::fs::remove_file(&tmp);
         return Err(format!("pandoc failed: {}", err.trim()));
     }
+    std::fs::rename(&tmp, &dest_path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        e.to_string()
+    })?;
     Ok(dest)
 }

@@ -7,19 +7,32 @@ use tokio::process::Child;
 
 /// Read-aloud via the `edge-tts` CLI (Microsoft neural voices).
 /// ponytail: detect-and-use like pandoc — no bundled TTS, no websocket
-/// reimplementation of the Edge protocol. Ceiling: single synth at a time,
-/// ~30k chars per request; add streaming chunking if long-doc reading lags.
+/// reimplementation of the Edge protocol. Ceiling: ~30k chars per request;
+/// synths run concurrently (the frontend prefetches ahead); add streaming
+/// chunking if long-doc reading lags.
 /// Ceiling: the xdg-open fallback hands the file to the desktop default app
 /// and exits immediately, so Stop cannot kill that playback (mpv/ffplay can).
 
+/// Slot entries carry the owning request's generation: when a newer request
+/// replaces the slot, the superseded task's poll loop must NOT poll (or
+/// clear) its successor's child — it used to, returning success for an mp3
+/// that was never written and stopping the survivor.
 pub struct TtsState {
-    synth: Mutex<Option<Child>>,
-    player: Mutex<Option<Child>>,
+    /// In-flight synthesis children, keyed by request generation. Several run
+    /// concurrently (the frontend prefetches ahead); tts_stop drains the map.
+    synth: Mutex<std::collections::HashMap<u64, Child>>,
+    player: Mutex<Option<(u64, Child)>>,
+}
+
+fn next_gen() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::SeqCst)
 }
 
 pub fn tts_state() -> TtsState {
     TtsState {
-        synth: Mutex::new(None),
+        synth: Mutex::new(std::collections::HashMap::new()),
         player: Mutex::new(None),
     }
 }
@@ -51,9 +64,7 @@ fn edge_tts_path() -> std::path::PathBuf {
 /// Kill any synth/player children. Called from Stop and from app exit
 /// (children used to survive the app).
 pub fn stop_internal(state: &TtsState) {
-    if let Ok(mut s) = state.synth.lock() {
-        kill_locked(&mut s);
-    }
+    drain_synths(state);
     if let Ok(mut p) = state.player.lock() {
         kill_locked(&mut p);
     }
@@ -112,9 +123,17 @@ pub fn tts_voices(on_result: Channel<Cmd<Vec<String>>>) {
     });
 }
 
-fn kill_locked(slot: &mut Option<Child>) {
-    if let Some(mut child) = slot.take() {
+fn kill_locked(slot: &mut Option<(u64, Child)>) {
+    if let Some((_, mut child)) = slot.take() {
         let _ = child.start_kill();
+    }
+}
+
+fn drain_synths(state: &TtsState) {
+    if let Ok(mut s) = state.synth.lock() {
+        for (_, mut child) in s.drain() {
+            let _ = child.start_kill();
+        }
     }
 }
 
@@ -198,19 +217,49 @@ async fn synth_inner(
     }
     // ponytail: hard cap — edge-tts degrades on very long single requests.
     let text = text.chars().take(30_000).collect::<String>();
-    // Kill a stale synth only — a prefetch must not cut off live playback.
-    if let Ok(mut s) = state.synth.lock() {
-        kill_locked(&mut s);
-    }
+    // No kill-on-new-request here: the prefetch pipeline keeps several synths
+    // in flight and each owns a uniquely named mp3 — killing the previous one
+    // used to make the prefetch pipeline self-terminate. tts_stop drains.
     cleanup_old_temp_files();
 
     let stamp = crate::fs::epoch_ms();
     let dir = std::env::temp_dir();
-    // predictable-name + symlink-following + never-cleaned: fixed by using an
-    // exclusive per-request name and a janitor sweep (below).
-    let txt = dir.join(format!("notepad-tts-{stamp}-{}.txt", std::process::id()));
-    let mp3 = dir.join(format!("notepad-tts-{stamp}-{}.mp3", std::process::id()));
-    std::fs::write(&txt, &text).map_err(|e| e.to_string())?;
+    // Exclusive + 0600: /tmp is world-writable, so a guessed name must not
+    // follow a pre-planted symlink and document text must not be readable by
+    // other local users. Retry with a fresh stamp on the (rare) name clash.
+    let mut txt = None;
+    let mut mp3 = None;
+    for attempt in 0..5 {
+        let s = stamp + attempt;
+        let t = dir.join(format!("notepad-tts-{s}-{}.txt", std::process::id()));
+        let m = dir.join(format!("notepad-tts-{s}-{}.mp3", std::process::id()));
+        #[cfg(unix)]
+        let open = {
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&t)
+        };
+        #[cfg(not(unix))]
+        let open = std::fs::OpenOptions::new().write(true).create_new(true).open(&t);
+        match open {
+            Ok(mut f) => {
+                use std::io::Write as _;
+                f.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+                txt = Some(t);
+                mp3 = Some(m);
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    let Some(txt) = txt else {
+        return Err("could not create a TTS temp file".into());
+    };
+    let mp3 = mp3.unwrap();
 
     let txt2 = txt.clone();
     let mp32 = mp3.clone();
@@ -244,23 +293,29 @@ async fn synth_inner(
         .spawn()
         .map_err(|e| format!("edge-tts not found: {e}"))?;
 
-    *state.synth.lock().map_err(|e| e.to_string())? = Some(synth);
+    let gen = next_gen();
+    state
+        .synth
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(gen, synth);
 
     // Poll for completion without holding the lock across .await, so
-    // tts_stop can take and kill the child mid-synthesis.
+    // tts_stop can drain and kill children mid-synthesis. Only this task's
+    // own generation is ours to poll or remove.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(300);
     loop {
         {
             let mut s = state.synth.lock().map_err(|e| e.to_string())?;
-            match s.as_mut() {
-                // Slot emptied by tts_stop.
+            match s.get_mut(&gen) {
+                // Drained by tts_stop (or a stop of this very request).
                 None => {
                     let _ = std::fs::remove_file(&txt);
                     return Err("stopped".into());
                 }
                 Some(child) => match child.try_wait() {
                     Ok(Some(status)) => {
-                        *s = None;
+                        s.remove(&gen);
                         let _ = std::fs::remove_file(&txt);
                         if !status.success() {
                             return Err("speech synthesis failed".into());
@@ -269,7 +324,7 @@ async fn synth_inner(
                     }
                     Ok(None) => {}
                     Err(e) => {
-                        *s = None;
+                        s.remove(&gen);
                         let _ = std::fs::remove_file(&txt);
                         return Err(e.to_string());
                     }
@@ -277,12 +332,24 @@ async fn synth_inner(
             }
         }
         if tokio::time::Instant::now() >= deadline {
+            state
+                .synth
+                .lock()
+                .map_err(|e| e.to_string())?
+                .remove(&gen);
             let _ = std::fs::remove_file(&txt);
             return Err("speech synthesis timed out".into());
         }
         tokio::time::sleep(Duration::from_millis(120)).await;
     }
 
+    // edge-tts writes the mp3 with default perms; tighten before it lingers
+    // (up to an hour on the xdg-open path).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&mp3, std::fs::Permissions::from_mode(0o600));
+    }
     Ok(mp3)
 }
 
@@ -317,7 +384,8 @@ async fn play_inner(mp3: &std::path::Path, state: &TtsState) -> Result<String, S
         .or_else(|| play("xdg-open", &[]).map(|c| (c, "xdg-open")));
     match player {
         Some((child, name)) => {
-            *state.player.lock().map_err(|e| e.to_string())? = Some(child);
+            let gen = next_gen();
+            *state.player.lock().map_err(|e| e.to_string())? = Some((gen, child));
             if name == "xdg-open" {
                 // ponytail: the mp3 outlives playback here — xdg-open hands
                 // the file to the desktop and exits, so deletion would race
@@ -331,7 +399,9 @@ async fn play_inner(mp3: &std::path::Path, state: &TtsState) -> Result<String, S
                     let mut p = state.player.lock().map_err(|e| e.to_string())?;
                     match p.as_mut() {
                         None => return Err("stopped".into()),
-                        Some(c) => match c.try_wait() {
+                        // A newer play replaced ours — stop pacing the old one.
+                        Some((g, _)) if *g != gen => return Err("stopped".into()),
+                        Some((_, c)) => match c.try_wait() {
                             Ok(Some(_)) => {
                                 *p = None;
                                 let _ = std::fs::remove_file(mp3);
@@ -360,7 +430,7 @@ async fn play_inner(mp3: &std::path::Path, state: &TtsState) -> Result<String, S
 
 /// Remove notepad-tts temp files older than an hour. Document text used to
 /// sit in /tmp forever.
-fn cleanup_old_temp_files() {
+pub(crate) fn cleanup_old_temp_files() {
     let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
         return;
     };
