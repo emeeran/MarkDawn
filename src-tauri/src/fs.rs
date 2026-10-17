@@ -1138,7 +1138,10 @@ mod tests {
         assert_eq!(m, mtime_ms(&f).unwrap());
         assert_eq!(fs::read_to_string(&f).unwrap(), "v2");
         // Stale mtime fails with the exact prefix the frontend matches.
-        let err = write_file_inner(&guard, &f, "v3", Some(on_disk)).unwrap_err();
+        // (Deliberately stale by construction, not by timing: on a
+        // coarse-mtime filesystem two writes can share a timestamp.)
+        let stale = on_disk.saturating_sub(1_000);
+        let err = write_file_inner(&guard, &f, "v3", Some(stale)).unwrap_err();
         assert!(
             err.starts_with(MTIME_CONFLICT_PREFIX),
             "expected {MTIME_CONFLICT_PREFIX:?} prefix, got {err:?}"
