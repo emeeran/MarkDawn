@@ -70,5 +70,5 @@ jobs:
           grep -q '^Exec=markdawn %f' "$work/usr/share/applications/MarkDawn.desktop"
           # md5sums must still verify after the repack (dpkg --verify clean).
           current=$(md5sum "$work/usr/share/applications/MarkDawn.desktop" | cut -d' ' -f1)
-          pinned=$(tar -xzf "$work/control.tar.gz" -O DEBIAN/md5sums | grep 'MarkDawn.desktop' | cut -d' ' -f1)
+          pinned=$(tar -xzOf "$work/control.tar.gz" md5sums | grep 'MarkDawn.desktop' | cut -d' ' -f1)
           [ "$current" = "$pinned" ]

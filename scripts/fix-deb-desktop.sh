@@ -26,11 +26,20 @@ sed -i 's|^Exec=markdawn$|Exec=markdawn %f|' "$desktop"
 tar -czf "$work/data.tar.gz" -C "$work" usr
 
 # Refresh md5sums for the file we just changed, then repack control.
-md5sums="$work/DEBIAN/md5sums"
+# Member layout varies (tauri: "md5sums control"; dpkg-deb: "DEBIAN/…") —
+# detect it and repack the same shape.
+mkdir -p "$work/ctl"
+tar -xzf "$work/control.tar.gz" -C "$work/ctl"
+md5sums="$work/ctl/md5sums"
+[ -f "$md5sums" ] || md5sums="$work/ctl/DEBIAN/md5sums"
 if [ -f "$md5sums" ]; then
   new=$(md5sum "$desktop" | cut -d' ' -f1)
   sed -i "s|^[0-9a-f]*  usr/share/applications/MarkDawn.desktop|$new  usr/share/applications/MarkDawn.desktop|" "$md5sums"
-  tar -czf "$work/control.tar.gz" -C "$work" DEBIAN
+  if [ -f "$work/ctl/DEBIAN/md5sums" ]; then
+    tar -czf "$work/control.tar.gz" -C "$work/ctl" DEBIAN
+  else
+    tar -czf "$work/control.tar.gz" -C "$work/ctl" md5sums control
+  fi
 fi
 
 # `ar r` replaces members in place, keeping debian-binary first (required).
