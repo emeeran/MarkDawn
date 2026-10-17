@@ -28,7 +28,7 @@ vi.mock('../src/lib/tauri', () => ({
   pickSaveFile: mocks.pickSaveFile,
 }))
 
-import { useTabs } from '../src/stores/tabs'
+import { MTIME_CONFLICT, useTabs } from '../src/stores/tabs'
 import { registerEmitFlush } from '../src/editor/editBridge'
 
 function seedTab(partial: Partial<Tab>): Tab {
@@ -53,6 +53,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  registerEmitFlush(null)
   vi.useRealTimers()
 })
 
@@ -172,9 +173,35 @@ describe('flushAll (quit)', () => {
 })
 
 describe('mtime conflict guard', () => {
+  it('adopts the post-save mtime even when edits landed mid-save (no self-conflict)', async () => {
+    const { tauri } = await import('../src/lib/tauri')
+    const tab = seedTab({ path: '/ws/mid.md', title: 'mid.md', markdown: 'v1', dirty: true, mtime: 111 })
+    useTabs.setState({ activeId: tab.id })
+    // The user types while the save is in flight: the write carried v1, the
+    // buffer is now v2.
+    const saving = useTabs.getState().saveById(tab.id)
+    useTabs.getState().setContent(tab.id, 'v2')
+    await saving
+    expect(useTabs.getState().tabs[0].dirty).toBe(true) // v2 still unsaved
+    // The mtime of OUR OWN write (mock: 4242) must be adopted — keeping the
+    // pre-save value made the next autosave conflict against our own write.
+    expect(useTabs.getState().tabs[0].mtime).toBe(4242)
+    await useTabs.getState().saveById(tab.id)
+    expect(vi.mocked(tauri.writeFile).mock.calls.at(-1)?.[2]).toBe(4242)
+  })
+
+  it('flushes the pending editor emit before closing (data-loss guard)', async () => {
+    const flush = vi.fn()
+    registerEmitFlush(flush)
+    const tab = seedTab({ path: '/ws/f.md', title: 'f.md', markdown: 'x', dirty: true })
+    await useTabs.getState().close(tab.id)
+    expect(flush).toHaveBeenCalled()
+    expect(useTabs.getState().tabs.some((t) => t.id === tab.id)).toBe(false)
+  })
+
   it('blocks a stale save, keeps the buffer dirty, and flags the tab stale', async () => {
     const { tauri } = await import('../src/lib/tauri')
-    vi.mocked(tauri.writeFile).mockRejectedValueOnce(new Error('mtime-conflict: file changed on disk'))
+    vi.mocked(tauri.writeFile).mockRejectedValueOnce(new Error(`${MTIME_CONFLICT}: file changed on disk`))
     const tab = seedTab({ path: '/ws/a.md', title: 'a.md', markdown: 'mine', dirty: true })
     useTabs.setState({ activeId: tab.id })
     expect(await useTabs.getState().saveById(tab.id)).toBe('failed')
@@ -199,7 +226,7 @@ describe('mtime conflict guard', () => {
 
   it('keepMine clears the stale flag and the mtime guard', async () => {
     const { tauri } = await import('../src/lib/tauri')
-    vi.mocked(tauri.writeFile).mockRejectedValueOnce(new Error('mtime-conflict: file changed on disk'))
+    vi.mocked(tauri.writeFile).mockRejectedValueOnce(new Error(`${MTIME_CONFLICT}: file changed on disk`))
     const tab = seedTab({ path: '/ws/a.md', markdown: 'x', dirty: true, mtime: 5 })
     useTabs.setState({ activeId: tab.id })
     await useTabs.getState().saveById(tab.id)

@@ -4,6 +4,11 @@ import { pickSaveFile, tauri } from '../lib/tauri'
 import type { Tab } from '../types'
 import { useToast } from './toast'
 
+/** Save-conflict marker emitted by Rust's write_file (fs.rs
+ *  MTIME_CONFLICT_PREFIX). The silent-clobber protection hangs on this
+ *  string — change both sides together; a Rust test pins the producer. */
+export const MTIME_CONFLICT = 'mtime-conflict'
+
 interface ClosedTab {
   path: string | null
   title: string
@@ -259,7 +264,7 @@ export const useTabs = create<TabsStore>((setState, get) => ({
       return 'saved'
     } catch (e) {
       selfSaves.delete(tab.path)
-      if (String(e).includes('mtime-conflict')) {
+      if (String(e).includes(MTIME_CONFLICT)) {
         // The file changed on disk behind our backs — surface the conflict
         // instead of clobbering whichever external writer got there first.
         // Halt the autosave chain and toast once; the stale flag dedupes so

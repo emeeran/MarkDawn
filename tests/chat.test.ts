@@ -8,14 +8,24 @@ import type { ChatMessage } from '../src/types'
 
 const streamCalls: { messages: ChatMessage[]; system: string }[] = []
 const cancelFns: (() => void)[] = []
+const cbs: { delta: (t: string) => void; done: () => void; error: (m: string) => void }[] = []
 
 vi.mock('../src/ai/client', () => ({
-  stream: vi.fn((messages: ChatMessage[], system: string) => {
+  stream: vi.fn(
+ (
+    messages: ChatMessage[],
+    system: string,
+    onDelta: (t: string) => void,
+    onDone: () => void,
+    onError: (m: string) => void,
+  ) => {
     streamCalls.push({ messages, system })
+    cbs.push({ delta: onDelta, done: onDone, error: onError })
     const cancel = vi.fn()
     cancelFns.push(cancel)
     return { cancel }
-  }),
+  },
+ ),
 }))
 
 vi.mock('../src/lib/tauri', () => ({
@@ -40,7 +50,49 @@ function completeLastReply(text: string) {
 beforeEach(() => {
   streamCalls.length = 0
   cancelFns.length = 0
+  cbs.length = 0
   useChat.setState({ messages: [], streaming: false, cancel: null })
+})
+
+describe('stream plumbing', () => {
+  it('accumulates deltas into the assistant bubble', () => {
+    useChat.getState().send('sys', [{ role: 'user', content: 'q' }])
+    cbs.at(-1)!.delta('Hel')
+    cbs.at(-1)!.delta('lo')
+    expect(useChat.getState().messages.at(-1)!.content).toBe('Hello')
+    cbs.at(-1)!.done()
+    expect(useChat.getState().streaming).toBe(false)
+    expect(useChat.getState().messages.at(-1)!.content).toBe('Hello')
+  })
+
+  it('drops an empty assistant bubble on done', () => {
+    useChat.getState().send('sys', [{ role: 'user', content: 'q' }])
+    cbs.at(-1)!.done()
+    expect(useChat.getState().messages).toHaveLength(1)
+  })
+
+  it('appends an error to a partial answer instead of replacing it', () => {
+    useChat.getState().send('sys', [{ role: 'user', content: 'q' }])
+    cbs.at(-1)!.delta('partial answer')
+    cbs.at(-1)!.error('rate limited')
+    expect(useChat.getState().messages.at(-1)!.content).toBe('partial answer\n\n⚠ rate limited')
+    expect(useChat.getState().streaming).toBe(false)
+  })
+
+  it('shows a bare error when nothing streamed yet', () => {
+    useChat.getState().send('sys', [{ role: 'user', content: 'q' }])
+    cbs.at(-1)!.error('boom')
+    expect(useChat.getState().messages.at(-1)!.content).toBe('⚠ boom')
+  })
+
+  it('cancel drops an empty bubble and resets streaming', () => {
+    useChat.getState().send('sys', [{ role: 'user', content: 'q' }])
+    useChat.getState().cancel!()
+    expect(cancelFns.at(-1)).toHaveBeenCalled()
+    expect(useChat.getState().messages).toHaveLength(1)
+    expect(useChat.getState().streaming).toBe(false)
+    expect(useChat.getState().cancel).toBeNull()
+  })
 })
 
 describe('chat memory', () => {

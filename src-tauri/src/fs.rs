@@ -240,11 +240,16 @@ pub(crate) fn epoch_ms() -> u64 {
 /// and our write would silently clobber that version.
 /// ponytail: ms truncation can miss an external write in the same millisecond
 /// as our own save; the fs-changed watcher covers that sliver.
+/// The frontend detects save conflicts by matching this prefix
+/// (src/stores/tabs.ts `MTIME_CONFLICT`) — keep both sides in sync; a Rust
+/// test pins the prefix so a rename cannot silently sever the guard.
+pub(crate) const MTIME_CONFLICT_PREFIX: &str = "mtime-conflict";
+
 fn check_mtime(path: &Path, expected: Option<u64>) -> Result<(), String> {
     match expected {
         None => Ok(()), // unguarded: new file, or the user chose "Keep mine"
         Some(expected) if expected == mtime_ms(path)? => Ok(()),
-        Some(_) => Err("mtime-conflict: file changed on disk".into()),
+        Some(_) => Err(format!("{MTIME_CONFLICT_PREFIX}: file changed on disk")),
     }
 }
 
@@ -258,11 +263,22 @@ pub fn write_file(
     expected_mtime: Option<u64>,
     guard: State<'_, FsGuard>,
 ) -> Result<u64, String> {
-    let p = PathBuf::from(&path);
-    guard.check(&p)?;
-    check_mtime(&p, expected_mtime)?;
-    atomic_write(&p, &contents)?;
-    mtime_ms(&p)
+    write_file_inner(&guard, &PathBuf::from(&path), &contents, expected_mtime)
+}
+
+/// The guard → mtime-check → atomic-write sequence, in this order. Tests pin
+/// it because reordering (e.g. writing before checking) breaks the
+/// conflict guard that keeps autosave from clobbering external edits.
+pub(crate) fn write_file_inner(
+    guard: &FsGuard,
+    p: &Path,
+    contents: &str,
+    expected_mtime: Option<u64>,
+) -> Result<u64, String> {
+    guard.check(p)?;
+    check_mtime(p, expected_mtime)?;
+    atomic_write(p, contents)?;
+    mtime_ms(p)
 }
 
 /// mtime probe for the frontend's conflict tracking (open / reload paths).
@@ -1103,6 +1119,36 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("notepad-test-{name}-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// The silent-clobber protection hangs on this literal: the frontend
+    /// matches the prefix (src/stores/tabs.ts MTIME_CONFLICT). If this test
+    /// fails after a rename, update BOTH sides together.
+    #[test]
+    fn mtime_conflict_error_carries_the_contract_prefix() {
+        let dir = tmpdir("contract");
+        let f = dir.join("doc.md");
+        fs::write(&f, "v1").unwrap();
+        let guard = FsGuard {
+            roots: Arc::new(Mutex::new(vec![dir.clone()])),
+        };
+        let on_disk = mtime_ms(&f).unwrap();
+        // Fresh mtime passes and returns the post-write mtime.
+        let m = write_file_inner(&guard, &f, "v2", Some(on_disk)).unwrap();
+        assert_eq!(m, mtime_ms(&f).unwrap());
+        assert_eq!(fs::read_to_string(&f).unwrap(), "v2");
+        // Stale mtime fails with the exact prefix the frontend matches.
+        let err = write_file_inner(&guard, &f, "v3", Some(on_disk)).unwrap_err();
+        assert!(
+            err.starts_with(MTIME_CONFLICT_PREFIX),
+            "expected {MTIME_CONFLICT_PREFIX:?} prefix, got {err:?}"
+        );
+        // The failed write must not have landed.
+        assert_eq!(fs::read_to_string(&f).unwrap(), "v2");
+        // Outside the guard is rejected before any write happens.
+        let outside = tmpdir("contract-outside").join("x.md");
+        assert!(write_file_inner(&guard, &outside, "no", None).is_err());
+        assert!(!outside.exists());
     }
 
     #[test]
