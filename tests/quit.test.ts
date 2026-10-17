@@ -52,12 +52,14 @@ describe('quitFlow', () => {
 
   it('keeps the watchdog fed via extend heartbeats during a long flush', async () => {
     let resolveFlush!: (v: { failed: string[] }) => void
+    const extend = vi.fn(async () => {})
     const d = deps({
+      extend,
       flush: vi.fn(() => new Promise<{ failed: string[] }>((r) => (resolveFlush = r))),
     })
     const quitting = quitFlow(d)
     await vi.advanceTimersByTimeAsync(3500)
-    expect(d.extend.mock.calls.length).toBeGreaterThanOrEqual(3)
+    expect(extend.mock.calls.length).toBeGreaterThanOrEqual(3)
     resolveFlush({ failed: [] })
     await quitting
     expect(d.quit).toHaveBeenCalledOnce()
