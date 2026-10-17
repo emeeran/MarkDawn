@@ -10,7 +10,6 @@ import { useToast } from './toast'
 export const NON_CHAT_MODEL = /guard|whisper|tts|embed|rerank|safety|dall-e/i
 
 interface SettingsStore extends Settings {
-  loaded: boolean
   load: () => Promise<void>
   set: <K extends keyof Settings>(key: K, value: Settings[K]) => void
 }
@@ -19,7 +18,6 @@ let saveTimer: ReturnType<typeof setTimeout> | undefined
 
 export const useSettings = create<SettingsStore>((setState, get) => ({
   ...DEFAULT_SETTINGS,
-  loaded: false,
   async load() {
     try {
       const stored = (await tauri.settingsGet()) as Partial<Settings> | null
@@ -36,9 +34,9 @@ export const useSettings = create<SettingsStore>((setState, get) => ({
           models[p] = DEFAULT_SETTINGS.models[p]
         }
       }
-      setState({ ...DEFAULT_SETTINGS, ...stored, models, loaded: true })
+      setState({ ...DEFAULT_SETTINGS, ...stored, models })
     } catch {
-      setState({ loaded: true })
+      // Keep defaults; load() failing just means first-run.
     }
   },
   set(key, value) {
@@ -47,10 +45,9 @@ export const useSettings = create<SettingsStore>((setState, get) => ({
     clearTimeout(saveTimer)
     saveTimer = setTimeout(() => {
       const s = get()
-      const { loaded: _l, ...rest } = s
       // Silent failure here used to mean settings silently stopped persisting.
       void tauri
-        .settingsSet(rest)
+        .settingsSet(s)
         .catch((e) => useToast.getState().show(`Settings not saved: ${e}`))
     }, 300)
   },

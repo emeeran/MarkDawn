@@ -114,13 +114,24 @@ export function MuyaEditor({ tab, onInput, onSelection }: Props) {
     }
 
     /** Import a user-consented source file into the doc assets, then insert. */
-    function importFile(docDir: string, src: string) {
+    function importFile(docDir: string, src: string, errLabel = 'Image paste') {
       // A paste/drop is user consent — allow the source, then let imageImport
       // pass its own guard.
       void tauri
         .fsAllow(src)
         .then(() => tauri.imageImport(docDir, src))
         .then(insertImageMarkdown)
+        .catch((err) => useToast.getState().show(`${errLabel}: ${err}`))
+    }
+
+    /** WebKitGTK hides system-clipboard bitmaps from the DOM — ask the OS. */
+    function pasteFromOs(docDir: string, emptyMsg: string) {
+      void tauri
+        .pasteImage(docDir)
+        .then((rel) => {
+          if (rel) insertImageMarkdown(rel)
+          else useToast.getState().show(emptyMsg)
+        })
         .catch((err) => useToast.getState().show(`Image paste: ${err}`))
     }
 
@@ -173,27 +184,14 @@ export function MuyaEditor({ tab, onInput, onSelection }: Props) {
       }
 
       if (!imageItem) {
-        // WebKitGTK hides system-clipboard BITMAPS from the DOM — ask the OS.
-        void tauri
-          .pasteImage(docDir)
-          .then((rel) => {
-            if (rel) insertImageMarkdown(rel)
-            else useToast.getState().show('No image on the clipboard')
-          })
-          .catch((err) => useToast.getState().show(`Image paste: ${err}`))
+        pasteFromOs(docDir, 'No image on the clipboard')
         return
       }
 
       const file = (imageItem as DataTransferItem).getAsFile()
       if (!file) {
         // getAsFile() null (WebKitGTK): OS clipboard fallback.
-        void tauri
-          .pasteImage(docDir)
-          .then((rel) => {
-            if (rel) insertImageMarkdown(rel)
-            else useToast.getState().show('Could not read the clipboard image')
-          })
-          .catch((err) => useToast.getState().show(`Image paste: ${err}`))
+        pasteFromOs(docDir, 'Could not read the clipboard image')
         return
       }
       const ext = MIME_EXT[(imageItem as DataTransferItem).type]
@@ -212,12 +210,7 @@ export function MuyaEditor({ tab, onInput, onSelection }: Props) {
       const src = (e as CustomEvent<string>).detail
       const docDir = requireDocDir()
       if (!docDir) return
-      // The drop is user consent — allow the source path, then import.
-      void tauri
-        .fsAllow(src)
-        .then(() => tauri.imageImport(docDir, src))
-        .then(insertImageMarkdown)
-        .catch((err) => useToast.getState().show(`Image import: ${err}`))
+      importFile(docDir, src, 'Image import')
     }
 
     // Ctrl+C/X/A handled here so clipboard keys work regardless of WebKitGTK's

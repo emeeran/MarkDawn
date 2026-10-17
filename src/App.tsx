@@ -1,7 +1,6 @@
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useRef, useState } from 'react'
 import type { ITocItem } from '@muyajs/core'
 import markDawnLogo from './assets/markdawn-logo.png'
@@ -11,8 +10,8 @@ import { flushPendingEmit } from './editor/editBridge'
 import { isReading } from './ai/tts'
 import { FORMAT_ACTIONS, PARAGRAPH_ACTIONS } from './editor/inserts'
 import { MuyaEditor } from './editor/MuyaEditor'
-import { editOp, getCommands } from './commands/registry'
-import { pickFolder, pickFile, tauri } from './lib/tauri'
+import { editOp, getCommands, openFolderViaPicker, openFileViaPicker } from './commands/registry'
+import { tauri } from './lib/tauri'
 import { ChatPanel } from './panels/ChatPanel'
 import { CommandPalette } from './panels/CommandPalette'
 import { FileTree } from './panels/FileTree'
@@ -41,6 +40,14 @@ interface DiffRequest {
 
 const darkQuery = window.matchMedia('(prefers-color-scheme: dark)')
 
+/** Adopt the on-disk contents of `path` into a tab (external change or reload). */
+function reloadTabInto(path: string, tabId: string) {
+  void tauri
+    .readFile(path)
+    .then((md) => tauri.statMtime(path).then((mtime) => useTabs.getState().markSaved(tabId, md, mtime)))
+    .catch(() => {})
+}
+
 function resolvedTheme(theme: ThemeId): string {
   return theme === 'auto' ? (darkQuery.matches ? 'night' : 'github') : theme
 }
@@ -60,7 +67,7 @@ async function quitFlow() {
     useToast.getState().show(`Not quitting — save failed: ${failed.join(', ')}`)
     return
   }
-  await invoke('quit_now').catch(() => {
+  await tauri.quitNow().catch(() => {
     quitting = false // quit didn't happen — allow a later retry to flush
   })
 }
@@ -130,7 +137,7 @@ export function App() {
     // DOM CustomEvents from feature modules (NOT tauri IPC events — these must
     // use window listeners; tauri listen() never sees them).
     const onTransform = (e: Event) => {
-      const { action, extra, range, span } = (e as CustomEvent<{ action: string; extra?: string; range: Range | null; span: { start: number; end: number; text: string } | null }>).detail
+      const { action, extra, range, span } = (e as CustomEvent<Omit<DiffRequest, 'key'>>).detail
       setSelStable(false)
       setDiff({ action, extra, range, span, key: Date.now() })
     }
@@ -147,7 +154,7 @@ export function App() {
       unDrop?.()
       window.removeEventListener('notepad:transform', onTransform)
       window.removeEventListener('notepad:open-settings', onOpenSettings)
-    window.removeEventListener('notepad:open-about', onOpenAbout)
+      window.removeEventListener('notepad:open-about', onOpenAbout)
       window.removeEventListener('notepad:clear-recents', onClearRecents)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -245,10 +252,7 @@ export function App() {
       if (t.consumeSelfSave(p) || t.wasSelfSaveRecently(p)) continue
       if (!tab.dirty) {
         // Quietly adopt the newer file (any tab, not just the active one).
-        void tauri
-          .readFile(p)
-          .then((md) => tauri.statMtime(p).then((mtime) => t.markSaved(tab.id, md, mtime)))
-          .catch(() => {})
+        reloadTabInto(p, tab.id)
       } else {
         t.markStale(p)
         if (tab.id === t.activeId) t.setBanner('This file changed on disk.')
@@ -264,10 +268,7 @@ export function App() {
     if (active?.path) {
       const p = active.path
       t.clearStale(p)
-      void tauri
-        .readFile(p)
-        .then((md) => tauri.statMtime(p).then((mtime) => t.markSaved(active.id, md, mtime)))
-        .catch(() => {})
+      reloadTabInto(p, active.id)
     }
   }
 
@@ -322,7 +323,7 @@ export function App() {
                 <button className="sidebar-fold" title="Fold sidebar (⌘⇧L)" onClick={() => settings.set('sidebarOpen', false)}>«</button>
               </div>
               {settings.sidebarTab === 'files' ? <FileTree /> : <Outline toc={toc} />}
-              {/* Same label as the title bar (App startReading setTitle). */}
+              {/* Same label as the title-bar effect above. */}
               <div className="sidebar-mode" title="Editing mode of the active tab — toggle in View menu (Ctrl+Shift+P)">
                 {raw ? 'Plain Text' : 'Markdown'}
               </div>
@@ -421,36 +422,16 @@ export function App() {
 
 function Welcome({ recents, onClearRecents }: { recents: string[]; onClearRecents: () => void }) {
   const tabs = useTabs()
-  const workspace = useWorkspace()
   return (
     <div className="welcome">
       <img src={markDawnLogo} alt="MarkDawn logo" className="welcome-logo" draggable={false} />
       <h1>MarkDawn</h1>
       <p>Seamless Markdown, with AI inside.</p>
       <div className="welcome-actions">
-        <button
-          className="primary"
-          onClick={() =>
-            pickFolder()
-              .then((d) => {
-                if (d) void workspace.openRoot(d)
-              })
-              .catch((e) => useToast.getState().show(`Open folder: ${e}`))
-          }
-        >
+        <button className="primary" onClick={() => void openFolderViaPicker()}>
           Open folder…
         </button>
-        <button
-          onClick={() =>
-            pickFile()
-              .then((p) => {
-                if (p) void tabs.open(p)
-              })
-              .catch((e) => useToast.getState().show(`Open file: ${e}`))
-          }
-        >
-          Open file…
-        </button>
+        <button onClick={() => void openFileViaPicker()}>Open file…</button>
         <button onClick={() => tabs.openUntitled()}>New file</button>
       </div>
       {recents.length > 0 && (

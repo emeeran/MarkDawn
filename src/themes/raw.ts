@@ -7,4 +7,3 @@ import newsprint from './newsprint.css?raw'
 import pixyll from './pixyll.css?raw'
 
 export const themeRaw: Record<string, string> = { github, night, newsprint, pixyll }
-export const githubCss = github

@@ -1,4 +1,4 @@
-import { invoke, Channel, convertFileSrc } from '@tauri-apps/api/core'
+import { invoke, Channel } from '@tauri-apps/api/core'
 import { open as pluginOpen, save as pluginSave } from '@tauri-apps/plugin-dialog'
 import type { AiEvent, AiStreamRequest, FileNode } from '../types'
 
@@ -79,8 +79,6 @@ export const tauri = {
   secretDelete: (provider: string) => invoke<void>('secret_delete', { provider }),
   secretStatus: () => invoke<Record<string, boolean>>('secret_status'),
 
-  ollamaModels: (ollamaUrl?: string) =>
-    cmdWithChannel<string[]>('ollama_models', { ollamaUrl }),
   fetchModels: (provider: string, ollamaUrl?: string) =>
     cmdWithChannel<string[]>('fetch_models', { provider, ollamaUrl }),
   pandocAvailable: () => invoke<boolean>('pandoc_available'),
@@ -151,5 +149,3 @@ export const tauri = {
     }
   },
 }
-
-export { convertFileSrc }

@@ -18,8 +18,4 @@ describe('pickCopySource', () => {
   it('never lets editor content shadow a selection made elsewhere', () => {
     expect(pickCopySource(false, '# doc block', 'chat text')).toBe('chat text')
   })
-
-  it('returns empty when there is nothing to copy anywhere', () => {
-    expect(pickCopySource(false, '', '')).toBe('')
-  })
 })

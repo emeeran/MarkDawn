@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { pickFolder, tauri } from '../lib/tauri'
+import { tauri } from '../lib/tauri'
+import { openFolderViaPicker } from '../commands/registry'
 import { useTabs } from '../stores/tabs'
 import { useToast } from '../stores/toast'
 import { useWorkspace } from '../stores/workspace'
@@ -13,7 +14,7 @@ export function FileTree() {
   if (!root) {
     return (
       <div className="panel-empty">
-        <button onClick={() => void openFolderPicker()}>Open folder…</button>
+        <button onClick={() => void openFolderViaPicker()}>Open folder…</button>
       </div>
     )
   }
@@ -144,15 +145,6 @@ function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
       {node.isDir && isOpen && node.children?.map((c) => <TreeNode key={c.path} node={c} depth={depth + 1} />)}
     </div>
   )
-}
-
-async function openFolderPicker() {
-  try {
-    const dir = await pickFolder()
-    if (dir) void useWorkspace.getState().openRoot(dir)
-  } catch (e) {
-    useToast.getState().show(`Open folder: ${e}`)
-  }
 }
 
 /** A file name is a single component — no separators, no traversal. */

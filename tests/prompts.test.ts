@@ -3,7 +3,6 @@ import {
   AI_FEATURES,
   buildTransformPrompt,
   featureEnabled,
-  QUICK_ACTIONS,
   REPORT_PROMPTS,
   TRANSFORM_PROMPTS,
 } from '../src/ai/prompts'
@@ -37,14 +36,6 @@ describe('AI_FEATURES registry', () => {
       if (SPECIAL.has(f.id)) continue
       expect(TRANSFORM_PROMPTS[f.id] ?? REPORT_PROMPTS[f.id], `runner for ${f.id}`).toBeTypeOf('function')
     }
-  })
-
-  it('exposes exactly the bar features in the selection action bar', () => {
-    expect(QUICK_ACTIONS).toEqual(AI_FEATURES.filter((f) => f.bar).map(({ id, label }) => ({ id, label })))
-  })
-
-  it('defaults every feature to enabled', () => {
-    for (const f of AI_FEATURES) expect(f.def).toBe(true)
   })
 })
 

@@ -9,11 +9,11 @@ import { insertMarkdown, insertText } from './editBridge'
  * insertText re-focuses only when focus was genuinely lost.
  */
 
-export function insertLinePrefix(prefix: string) {
+function insertLinePrefix(prefix: string) {
   insertText(prefix)
 }
 
-export function insertBlock(markdown: string) {
+function insertBlock(markdown: string) {
   void insertMarkdown(markdown)
 }
 

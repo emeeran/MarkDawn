@@ -137,8 +137,8 @@ export const REPORT_PROMPTS: Record<string, (text: string) => string> = {
 /**
  * Single source of truth for every AI feature: the selection action bar,
  * palette/menu commands, the native AI menu and the Settings toggles all
- * derive from this list. `def` is the enabled-by-default flag; settings may
- * override per feature (`aiFeatures[id] === false` disables).
+ * derive from this list. Settings may disable per feature
+ * (`aiFeatures[id] === false`); absent key = enabled.
  */
 export interface AiFeature {
   id: string
@@ -151,24 +151,23 @@ export interface AiFeature {
   /** Needs a text input before running (translate / custom / draft). */
   input?: boolean
   keywords?: string
-  def: boolean
 }
 
 export const AI_FEATURES: AiFeature[] = [
-  { id: 'humanize', label: 'Humanize', menu: 'Humanize Selection', bar: true, def: true, keywords: 'natural human rewrite' },
-  { id: 'improve', label: 'Improve writing', menu: 'Improve Writing', bar: true, def: true, keywords: 'transform rewrite' },
-  { id: 'grammar', label: 'Fix grammar', menu: 'Fix Grammar', bar: true, def: true, keywords: 'spelling punctuation' },
-  { id: 'shorter', label: 'Make shorter', menu: 'Shorten Selection', bar: true, def: true },
-  { id: 'longer', label: 'Make longer', menu: 'Expand Selection', bar: true, def: true },
-  { id: 'bullets', label: 'Bullet list', menu: 'Selection as Bullet List', bar: true, def: true },
-  { id: 'summarize', label: 'Summarize', menu: 'Summarize Selection', bar: true, def: true },
-  { id: 'translate', label: 'Translate…', menu: 'Translate Selection…', bar: true, input: true, def: true },
-  { id: 'custom', label: 'Custom prompt…', menu: 'Custom Prompt…', bar: true, input: true, def: true },
-  { id: 'tone', label: 'Check tone', menu: 'Tone Report', def: true, keywords: 'review style' },
-  { id: 'docSummary', label: 'Summarize document', menu: 'Summarize Document', def: true, keywords: 'outline tldr' },
-  { id: 'actionItems', label: 'Extract action items', menu: 'Extract Action Items', def: true, keywords: 'tasks todo checklist' },
-  { id: 'continue', label: 'Continue writing', menu: 'Continue Writing', def: true, keywords: 'write more' },
-  { id: 'draft', label: 'Draft from prompt…', menu: 'Draft from Prompt…', input: true, def: true, keywords: 'generate write new' },
+  { id: 'humanize', label: 'Humanize', menu: 'Humanize Selection', bar: true, keywords: 'natural human rewrite' },
+  { id: 'improve', label: 'Improve writing', menu: 'Improve Writing', bar: true, keywords: 'transform rewrite' },
+  { id: 'grammar', label: 'Fix grammar', menu: 'Fix Grammar', bar: true, keywords: 'spelling punctuation' },
+  { id: 'shorter', label: 'Make shorter', menu: 'Shorten Selection', bar: true },
+  { id: 'longer', label: 'Make longer', menu: 'Expand Selection', bar: true },
+  { id: 'bullets', label: 'Bullet list', menu: 'Selection as Bullet List', bar: true },
+  { id: 'summarize', label: 'Summarize', menu: 'Summarize Selection', bar: true },
+  { id: 'translate', label: 'Translate…', menu: 'Translate Selection…', bar: true, input: true },
+  { id: 'custom', label: 'Custom prompt…', menu: 'Custom Prompt…', bar: true, input: true },
+  { id: 'tone', label: 'Check tone', menu: 'Tone Report', keywords: 'review style' },
+  { id: 'docSummary', label: 'Summarize document', menu: 'Summarize Document', keywords: 'outline tldr' },
+  { id: 'actionItems', label: 'Extract action items', menu: 'Extract Action Items', keywords: 'tasks todo checklist' },
+  { id: 'continue', label: 'Continue writing', menu: 'Continue Writing', keywords: 'write more' },
+  { id: 'draft', label: 'Draft from prompt…', menu: 'Draft from Prompt…', input: true, keywords: 'generate write new' },
 ]
 
 /** Selection action bar entries (order = AI_FEATURES order). */

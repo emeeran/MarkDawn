@@ -30,13 +30,14 @@ export function ChatPanel() {
   }, [settings.provider])
 
   useEffect(() => {
-    if (!workspace.root) {
+    const root = workspace.root
+    if (!root) {
       setNotepad(null)
       return
     }
     let gone = false
     void (async () => {
-      const path = await tauri.pathJoin(workspace.root!, 'NOTEPAD.md')
+      const path = await tauri.pathJoin(root, 'NOTEPAD.md')
       const md = await tauri.readFile(path).catch(() => null)
       if (!gone) setNotepad(md)
     })()
@@ -49,7 +50,7 @@ export function ChatPanel() {
     bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight })
   }, [messages])
 
-  function send2() {
+  function submit() {
     const text = input.trim()
     if (!text || streaming) return
     setInput('')
@@ -154,14 +155,14 @@ export function ChatPanel() {
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()
-              send2()
+              submit()
             }
           }}
         />
         {streaming ? (
           <button className="chat-send" onClick={() => cancel?.()}>■</button>
         ) : (
-          <button className="chat-send" onClick={send2} disabled={!input.trim()}>➤</button>
+          <button className="chat-send" onClick={submit} disabled={!input.trim()}>➤</button>
         )}
       </div>
     </div>

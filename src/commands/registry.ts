@@ -37,7 +37,9 @@ const THEMES: { id: ThemeId; label: string }[] = [
   { id: 'pixyll', label: 'Pixyll' },
 ]
 
-async function openFile() {
+/** Pick a file/folder natively and open it. Shared by the palette/menu
+ *  commands, the FileTree header and the Welcome screen. */
+export async function openFileViaPicker() {
   try {
     const path = await pickFile([{ name: 'Markdown', extensions: ['md', 'markdown', 'txt'] }])
     if (path) void useTabs.getState().open(path)
@@ -46,7 +48,7 @@ async function openFile() {
   }
 }
 
-async function openFolder() {
+export async function openFolderViaPicker() {
   try {
     const dir = await pickFolder()
     if (dir) void useWorkspace.getState().openRoot(dir)
@@ -54,6 +56,9 @@ async function openFolder() {
     useToast.getState().show(`Open folder: ${e}`)
   }
 }
+
+const openFile = openFileViaPicker
+const openFolder = openFolderViaPicker
 
 async function exportHtml() {
   const { tabs, activeId } = useTabs.getState()

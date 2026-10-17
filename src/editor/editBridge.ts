@@ -46,13 +46,13 @@ function plainTa(): HTMLTextAreaElement | null {
  * fallback when a WebKit refuses — it skips undo but the text still lands and
  * the synthetic input event feeds React → store → autosave.
  */
-function taInsert(ta: HTMLTextAreaElement, text: string, start: number, end: number): boolean {
+function taInsert(ta: HTMLTextAreaElement, text: string, start: number, end: number): void {
   ta.focus()
   ta.setSelectionRange(start, end)
-  if (document.execCommand('insertText', false, text)) return true
-  ta.setRangeText(text, start, end, 'end')
-  ta.dispatchEvent(new Event('input', { bubbles: true }))
-  return true
+  if (!document.execCommand('insertText', false, text)) {
+    ta.setRangeText(text, start, end, 'end')
+    ta.dispatchEvent(new Event('input', { bubbles: true }))
+  }
 }
 
 export function setContent(markdown: string) {
@@ -92,7 +92,10 @@ function focusAndRetarget(range?: Range | null): boolean {
  */
 export function insertText(text: string, range?: Range | null): boolean {
   const ta = plainTa()
-  if (ta) return taInsert(ta, text, ta.selectionStart, ta.selectionEnd)
+  if (ta) {
+    taInsert(ta, text, ta.selectionStart, ta.selectionEnd)
+    return true
+  }
   if (!muya) return false
   // Never focus while the caret already lives in the editor (image paste, AI
   // inserts, format wraps all arrive with the caret in place).
@@ -145,7 +148,8 @@ export function replacePlainSpan(
   const ta = plainTa()
   if (!ta) return false
   if (ta.value.slice(span.start, span.end) !== span.text) return false
-  return taInsert(ta, text, span.start, span.end)
+  taInsert(ta, text, span.start, span.end)
+  return true
 }
 
 /** Which clipboard text a copy/cut should yield: Muya's markdown form of the

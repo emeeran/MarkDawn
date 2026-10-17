@@ -21,7 +21,7 @@ export function buildContext(doc: string, outline: string, selection: SelectionI
   if (doc.length <= FULL_DOC_BUDGET) {
     contextDoc = doc
   } else if (sel) {
-    const idx = findSubstring(doc, sel)
+    const idx = doc.indexOf(sel)
     if (idx >= 0) {
       const start = Math.max(0, idx - AROUND_SELECTION)
       const end = Math.min(doc.length, idx + sel.length + AROUND_SELECTION)
@@ -38,9 +38,4 @@ export function buildContext(doc: string, outline: string, selection: SelectionI
 function sliceMiddle(doc: string): string {
   const half = FULL_DOC_BUDGET / 2
   return `${doc.slice(0, half)}\n\n[…middle omitted…]\n\n${doc.slice(-half)}`
-}
-
-export function findSubstring(doc: string, sub: string): number {
-  const i = doc.indexOf(sub)
-  return i
 }
