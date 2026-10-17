@@ -1,41 +1,25 @@
+npm notice run markdawn@0.3.0 test
+npm notice run vitest run
 
-> notepad@0.1.0 test
-> vitest run
+ RUN  v3.2.7 /home/em/code/finished/markdawn
 
+ ✓ tests/context.test.ts (4 tests) 5ms
+ ✓ tests/prompts.test.ts (7 tests) 10ms
+ ✓ tests/diff.test.ts (6 tests) 11ms
+ ✓ tests/imageMap.test.ts (5 tests) 9ms
+ ✓ tests/editbridge.test.ts (1 test) 4ms
+ ✓ tests/clipboard.test.ts (4 tests) 8ms
+ ✓ tests/chat.test.ts (6 tests) 30ms
+ ✓ tests/tabs.test.ts (20 tests) 39ms
+ ✓ tests/settings.test.ts (3 tests) 8ms
+ ✓ tests/tts.test.ts (9 tests) 23ms
 
- RUN  v3.2.7 /home/em/code/wip/Notepad
+ Test Files  10 passed (10)
+      Tests  65 passed (65)
+   Start at  00:52:29
+   Duration  1.11s (transform 1.23s, setup 0ms, collect 2.68s, tests 146ms, environment 4ms, prepare 1.99s)
 
- ✓ tests/diff.test.ts (7 tests) 7ms
- ✓ tests/prompts.test.ts (3 tests) 3ms
- ✓ tests/context.test.ts (5 tests) 4ms
+NPM_EXIT=0
 
- Test Files  3 passed (3)
-      Tests  15 passed (15)
-   Start at  13:52:28
-   Duration  418ms (transform 101ms, setup 0ms, collect 142ms, tests 14ms, environment 1ms, prepare 305ms)
-
-   Compiling notepad v0.1.0 (/home/em/code/wip/Notepad/src-tauri)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.79s
-     Running unittests src/lib.rs (target/debug/deps/notepad_lib-633f4b328bcce8ab)
-
-running 5 tests
-test ai_proxy::tests::is_chat_model_excludes_non_chat_families ... ok
-test ai_proxy::tests::extract_api_error_falls_back_to_raw_body ... ok
-test ai_proxy::tests::extract_api_error_pulls_message_field ... ok
-test fs::tests::atomic_write_never_leaves_temp_files ... ok
-test fs::tests::atomic_write_overwrites_repeatedly ... ok
-
-test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-
-     Running unittests src/main.rs (target/debug/deps/notepad-46afd5844368dd58)
-
-running 0 tests
-
-test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-
-   Doc-tests notepad_lib
-
-running 0 tests
-
-test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-
+# Cargo (src-tauri), see baseline-cargo-test.txt for full output
+28 passed; 0 failed (CARGO_EXIT=0)

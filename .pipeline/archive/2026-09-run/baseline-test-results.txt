@@ -1,0 +1,41 @@
+
+> notepad@0.1.0 test
+> vitest run
+
+
+ RUN  v3.2.7 /home/em/code/wip/Notepad
+
+ ✓ tests/diff.test.ts (7 tests) 7ms
+ ✓ tests/prompts.test.ts (3 tests) 3ms
+ ✓ tests/context.test.ts (5 tests) 4ms
+
+ Test Files  3 passed (3)
+      Tests  15 passed (15)
+   Start at  13:52:28
+   Duration  418ms (transform 101ms, setup 0ms, collect 142ms, tests 14ms, environment 1ms, prepare 305ms)
+
+   Compiling notepad v0.1.0 (/home/em/code/wip/Notepad/src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.79s
+     Running unittests src/lib.rs (target/debug/deps/notepad_lib-633f4b328bcce8ab)
+
+running 5 tests
+test ai_proxy::tests::is_chat_model_excludes_non_chat_families ... ok
+test ai_proxy::tests::extract_api_error_falls_back_to_raw_body ... ok
+test ai_proxy::tests::extract_api_error_pulls_message_field ... ok
+test fs::tests::atomic_write_never_leaves_temp_files ... ok
+test fs::tests::atomic_write_overwrites_repeatedly ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/notepad-46afd5844368dd58)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests notepad_lib
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
