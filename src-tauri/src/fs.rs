@@ -167,12 +167,29 @@ pub fn seed_guard(app: &AppHandle) {
     }
 }
 
+/// Channel-delivered with the walk spawned (async responses don't resolve on
+/// this WebKitGTK build, hence not `async fn`): sync commands run on the main
+/// thread, and this fires on every autosave echo via the fs-changed refresh.
 #[tauri::command]
-pub fn read_dir(path: String, guard: State<'_, FsGuard>) -> Result<Vec<FileNode>, String> {
+pub fn read_dir(
+    path: String,
+    guard: State<'_, FsGuard>,
+    on_result: Channel<crate::pick::Cmd<Vec<FileNode>>>,
+) {
     let p = PathBuf::from(&path);
-    guard.check(&p)?;
+    let checked = guard.check(&p); // State cannot cross the spawn
+    tauri::async_runtime::spawn_blocking(move || {
+        let out = checked.and_then(|()| read_dir_inner(&p));
+        let _ = on_result.send(match out {
+            Ok(v) => crate::pick::Cmd::ok(v),
+            Err(e) => crate::pick::Cmd::err(e),
+        });
+    });
+}
+
+fn read_dir_inner(p: &Path) -> Result<Vec<FileNode>, String> {
     let mut nodes: Vec<FileNode> = Vec::new();
-    for entry in fs::read_dir(&p).map_err(|e| e.to_string())? {
+    for entry in fs::read_dir(p).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         let name = entry.file_name().to_string_lossy().to_string();
         if name.starts_with('.') {
@@ -256,19 +273,35 @@ fn check_mtime(path: &Path, expected: Option<u64>) -> Result<(), String> {
 /// Write a tab to disk, guarded: `expected_mtime` is the mtime the frontend
 /// loaded the content with (null = overwrite unconditionally). Returns the
 /// post-write mtime for the next round of conflict checks.
+/// Channel-delivered with the write spawned (async responses don't resolve on
+/// this WebKitGTK build): the atomic write's two fsyncs used to run on the
+/// main thread — sync commands do on this Tauri build — stalling the UI on
+/// every 500 ms autosave on slow disks.
 #[tauri::command]
 pub fn write_file(
     path: String,
     contents: String,
     expected_mtime: Option<u64>,
     guard: State<'_, FsGuard>,
-) -> Result<u64, String> {
-    write_file_inner(&guard, &PathBuf::from(&path), &contents, expected_mtime)
+    on_result: Channel<crate::pick::Cmd<u64>>,
+) {
+    let p = PathBuf::from(&path);
+    let checked = guard.check(&p); // State cannot cross the spawn
+    tauri::async_runtime::spawn_blocking(move || {
+        let out = checked.and_then(|()| write_checked(&p, &contents, expected_mtime));
+        let _ = on_result.send(match out {
+            Ok(v) => crate::pick::Cmd::ok(v),
+            Err(e) => crate::pick::Cmd::err(e),
+        });
+    });
 }
 
 /// The guard → mtime-check → atomic-write sequence, in this order. Tests pin
 /// it because reordering (e.g. writing before checking) breaks the
 /// conflict guard that keeps autosave from clobbering external edits.
+/// (The live command inlines the same sequence off-thread; this shape exists
+/// for the tests and any future in-process caller.)
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn write_file_inner(
     guard: &FsGuard,
     p: &Path,
@@ -276,6 +309,10 @@ pub(crate) fn write_file_inner(
     expected_mtime: Option<u64>,
 ) -> Result<u64, String> {
     guard.check(p)?;
+    write_checked(p, contents, expected_mtime)
+}
+
+fn write_checked(p: &Path, contents: &str, expected_mtime: Option<u64>) -> Result<u64, String> {
     check_mtime(p, expected_mtime)?;
     atomic_write(p, contents)?;
     mtime_ms(p)
@@ -388,17 +425,9 @@ fn import_image_inner(
 
 /// Last-resort save for dirty *untitled* tabs during quit (nothing to save
 /// them to). Goes to app-data/recovery/, never touches user folders.
-#[tauri::command]
-pub fn save_recovery(app: AppHandle, title: String, contents: String) -> Result<String, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("recovery");
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let stamp = epoch_ms() / 1000;
-    let safe: String = title
-        .chars()
+/// Filename-safe collapse for recovery names: keep alphanumerics/-/_ as-is.
+fn sanitize_recovery_name(s: &str) -> String {
+    s.chars()
         .map(|c| {
             if c.is_alphanumeric() || c == '-' || c == '_' {
                 c
@@ -406,10 +435,67 @@ pub fn save_recovery(app: AppHandle, title: String, contents: String) -> Result<
                 '_'
             }
         })
-        .collect();
-    let path = dir.join(format!("{safe}-{stamp}.md"));
-    fs::write(&path, contents).map_err(|e| e.to_string())?;
+        .collect()
+}
+
+fn recovery_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("recovery");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+/// Snapshot one buffer into the recovery dir. `key` is the tab id, so the
+/// filename is STABLE per tab — periodic snapshots overwrite their own file
+/// instead of accumulating one per quit/second (and two same-titled tabs
+/// cannot collide). Atomic: a crash mid-snapshot must not truncate the copy.
+#[tauri::command]
+pub fn save_recovery(
+    app: AppHandle,
+    title: String,
+    contents: String,
+    key: String,
+) -> Result<String, String> {
+    let dir = recovery_dir(&app)?;
+    let path = save_recovery_inner(&dir, &title, &contents, &key)?;
     Ok(path.to_string_lossy().to_string())
+}
+
+fn save_recovery_inner(dir: &Path, title: &str, contents: &str, key: &str) -> Result<PathBuf, String> {
+    let path = dir.join(format!(
+        "{}-{}.md",
+        sanitize_recovery_name(title),
+        sanitize_recovery_name(key)
+    ));
+    atomic_write(&path, contents)?;
+    Ok(path)
+}
+
+/// Drop the recovery snapshot for `key` — the tab was saved for real
+/// (Save-As) or closed, and a stale snapshot must not resurrect old content
+/// at the next launch. Missing file (nothing was ever snapshotted) is fine.
+#[tauri::command]
+pub fn delete_recovery(app: AppHandle, key: String) -> Result<(), String> {
+    let Ok(dir) = recovery_dir(&app) else {
+        return Ok(());
+    };
+    delete_recovery_inner(&dir, &key)
+}
+
+fn delete_recovery_inner(dir: &Path, key: &str) -> Result<(), String> {
+    let suffix = format!("-{}.md", sanitize_recovery_name(key));
+    if let Ok(entries) = fs::read_dir(dir) {
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.ends_with(".md") && name.ends_with(&suffix) {
+                let _ = fs::remove_file(e.path());
+            }
+        }
+    }
+    Ok(())
 }
 
 /// List saved recovery files, oldest-pruned: entries older than 30 days are
@@ -652,12 +738,19 @@ fn read_clipboard_image_inner() -> Option<ClipboardImage> {
 // can use the webview clipboard natively and don't need this path.
 
 /// Copy `text` to the system clipboard (wl-copy on Wayland, xclip on X11).
+/// Channel-delivered with the tool call spawned (async responses don't
+/// resolve on this WebKitGTK build): the old thread+`recv_timeout(3s)` shape
+/// still blocked the MAIN thread for up to 3 s on every copy when a
+/// clipboard tool hung. A hung wl-copy now costs the UI nothing.
 #[tauri::command]
-pub fn clipboard_write_text(text: String) -> Result<(), String> {
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || tx.send(write_clipboard_text_inner(&text)).ok());
-    rx.recv_timeout(Duration::from_secs(3))
-        .unwrap_or(Err("clipboard write timed out".into()))
+pub fn clipboard_write_text(text: String, on_result: Channel<crate::pick::Cmd<()>>) {
+    tauri::async_runtime::spawn_blocking(move || {
+        let out = write_clipboard_text_inner(&text);
+        let _ = on_result.send(match out {
+            Ok(()) => crate::pick::Cmd::ok(()),
+            Err(e) => crate::pick::Cmd::err(e),
+        });
+    });
 }
 
 fn write_clipboard_text_inner(text: &str) -> Result<(), String> {
@@ -690,11 +783,12 @@ fn write_clipboard_text_inner(text: &str) -> Result<(), String> {
 }
 
 /// Read text from the system clipboard; None when it holds no text.
+/// Channel-delivered off the main thread — see clipboard_write_text.
 #[tauri::command]
-pub fn clipboard_read_text() -> Result<Option<String>, String> {
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || tx.send(read_clipboard_text_inner()).ok());
-    Ok(rx.recv_timeout(Duration::from_secs(3)).unwrap_or(None))
+pub fn clipboard_read_text(on_result: Channel<crate::pick::Cmd<Option<String>>>) {
+    tauri::async_runtime::spawn_blocking(move || {
+        let _ = on_result.send(crate::pick::Cmd::ok(read_clipboard_text_inner()));
+    });
 }
 
 fn read_clipboard_text_inner() -> Option<String> {
@@ -1117,6 +1211,48 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("notepad-test-{name}-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// Recovery snapshots are the last-resort copy: the name must be stable
+    /// per tab key (periodic snapshots overwrite, never accumulate) and the
+    /// write atomic (a crash mid-snapshot must not truncate the copy).
+    #[test]
+    fn recovery_snapshot_is_stable_and_atomic() {
+        let dir = tmpdir("recovery");
+        let p1 = save_recovery_inner(&dir, "untitled", "v1", "key-1").unwrap();
+        assert_eq!(p1.file_name().unwrap().to_string_lossy(), "untitled-key-1.md");
+        // Unsafe title characters collapse into the safe name.
+        let weird = save_recovery_inner(&dir, "a/b:c", "x", "key-2").unwrap();
+        assert_eq!(weird.file_name().unwrap().to_string_lossy(), "a_b_c-key-2.md");
+        let p2 = save_recovery_inner(&dir, "untitled", "v2", "key-1").unwrap();
+        assert_eq!(p1, p2);
+        assert_eq!(fs::read_to_string(&p2).unwrap(), "v2");
+        let names: Vec<String> = fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names.len(), 2); // one file per key, no .tmp residue
+    }
+
+    #[test]
+    fn delete_recovery_removes_only_matching_key_and_tolerates_missing() {
+        let dir = tmpdir("recovery-del");
+        save_recovery_inner(&dir, "untitled", "a", "key-A").unwrap();
+        save_recovery_inner(&dir, "untitled", "b", "key-B").unwrap();
+        delete_recovery_inner(&dir, "key-A").unwrap();
+        let names: Vec<String> = fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, vec!["untitled-key-B.md".to_string()]);
+        // Missing snapshot (tab never snapshotted) is fine.
+        delete_recovery_inner(&dir, "key-A").unwrap();
+        // Suffix safety: key "1" must not match a file ending in "-21.md".
+        save_recovery_inner(&dir, "untitled", "c", "21").unwrap();
+        delete_recovery_inner(&dir, "1").unwrap();
+        assert!(dir.join("untitled-21.md").exists());
     }
 
     /// The silent-clobber protection hangs on this literal: the frontend

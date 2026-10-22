@@ -53,13 +53,18 @@ export async function pickSaveFile(defaultName: string, filters?: { name: string
 export const tauri = {
   /** Allow a user-consented path (pick/drop/launch) for fs + asset access. */
   fsAllow: (path: string) => invoke<void>('fs_allow', { path }),
-  readDir: (path: string) => invoke<FileNode[]>('read_dir', { path }),
+  readDir: (path: string) => cmdWithChannel<FileNode[]>('read_dir', { path }),
   readFile: (path: string) => invoke<string>('read_file', { path }),
   /** Guarded write: refuses when the disk mtime differs from expectedMtime
    *  (the content's load-time mtime; null overwrites unconditionally).
-   *  Resolves with the post-write mtime. */
+   *  Resolves with the post-write mtime. Channel-delivered so the atomic
+   *  write's fsyncs stay off the main thread (fires on every autosave). */
   writeFile: (path: string, contents: string, expectedMtime?: number | null) =>
-    invoke<number>('write_file', { path, contents, expectedMtime: expectedMtime ?? null }),
+    cmdWithChannel<number>('write_file', {
+      path,
+      contents,
+      expectedMtime: expectedMtime ?? null,
+    }),
   statMtime: (path: string) => invoke<number>('stat_mtime', { path }),
   createFile: (path: string) => invoke<void>('create_file', { path }),
   createDir: (path: string) => invoke<void>('create_dir', { path }),
@@ -85,9 +90,10 @@ export const tauri = {
   exportPandoc: (src: string, format: string) =>
     cmdWithChannel<string>('export_pandoc', { src, format }),
 
-  /** OS clipboard via the Rust bridge (WebKitGTK clipboard writes are unreliable). */
-  clipboardWriteText: (text: string) => invoke<void>('clipboard_write_text', { text }),
-  clipboardReadText: () => invoke<string | null>('clipboard_read_text'),
+  /** OS clipboard via the Rust bridge (WebKitGTK clipboard writes are unreliable).
+   *  Channel-delivered: a hung wl-copy/xclip must not block the UI thread. */
+  clipboardWriteText: (text: string) => cmdWithChannel<void>('clipboard_write_text', { text }),
+  clipboardReadText: () => cmdWithChannel<string | null>('clipboard_read_text'),
 
   ttsAvailable: () => invoke<boolean>('tts_available'),
   ttsVoices: () => cmdWithChannel<string[]>('tts_voices'),
@@ -115,9 +121,12 @@ export const tauri = {
   quitExtend: () => invoke<void>('quit_extend'),
   /** Cancel the watchdog: the flush refused to quit (failed saves). */
   quitDisarm: () => invoke<void>('quit_disarm'),
-  /** Last-resort save for dirty untitled tabs during quit. */
-  saveRecovery: (title: string, contents: string) =>
-    invoke<string>('save_recovery', { title, contents }),
+  /** Snapshot a buffer into the recovery dir. `key` is the tab id — the file
+   *  name is stable per tab, so repeated snapshots overwrite, not accumulate. */
+  saveRecovery: (title: string, contents: string, key: string) =>
+    invoke<string>('save_recovery', { title, contents, key }),
+  /** Drop a tab's recovery snapshot (saved for real / closed). */
+  deleteRecovery: (key: string) => invoke<void>('delete_recovery', { key }),
   /** Unrestored recovery files from previous sessions (stale ones pruned). */
   recoveryList: () => invoke<string[]>('recovery_list'),
 

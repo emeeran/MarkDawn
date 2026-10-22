@@ -55,6 +55,7 @@ pub fn run() {
             fs::clipboard_write_text,
             fs::clipboard_read_text,
             fs::save_recovery,
+            fs::delete_recovery,
             fs::recovery_list,
             fs::watch_start,
             fs::watch_stop,
