@@ -23,7 +23,8 @@ vi.mock('../src/lib/tauri', () => ({
     }),
     statMtime: vi.fn(async () => 1234),
     recentPush: vi.fn(async () => {}),
-    saveRecovery: vi.fn(async (title: string) => `/recovery/${title}.md`),
+    saveRecovery: vi.fn(async (title: string, _contents: string, key: string) => `/recovery/${title}-${key}.md`),
+    deleteRecovery: vi.fn(async () => {}),
   },
   pickSaveFile: mocks.pickSaveFile,
 }))
@@ -78,6 +79,27 @@ describe('autosave', () => {
     expect(useTabs.getState().tabs[0].dirty).toBe(true)
   })
 
+  it('snapshots a dirty untitled tab to recovery, throttled to one per 10s', async () => {
+    const { tauri } = await import('../src/lib/tauri')
+    const tab = seedTab({ markdown: 'draft' })
+    useTabs.getState().setContent(tab.id, 'draft 2')
+    await vi.advanceTimersByTimeAsync(500)
+    // The 500ms autosave cadence still fires — but lands in recovery.
+    expect(vi.mocked(tauri.saveRecovery)).toHaveBeenCalledWith('untitled', 'draft 2', tab.id)
+    // Typing again within the window: the autosave timer fires, the throttle
+    // holds — no second snapshot for the same content window.
+    vi.mocked(tauri.saveRecovery).mockClear()
+    useTabs.getState().setContent(tab.id, 'draft 3')
+    await vi.advanceTimersByTimeAsync(500)
+    expect(vi.mocked(tauri.saveRecovery)).not.toHaveBeenCalled()
+    // Past the window, the next edit's snapshot lands.
+    vi.mocked(tauri.saveRecovery).mockClear()
+    await vi.advanceTimersByTimeAsync(10_000)
+    useTabs.getState().setContent(tab.id, 'draft 4')
+    await vi.advanceTimersByTimeAsync(500)
+    expect(vi.mocked(tauri.saveRecovery)).toHaveBeenCalledWith('untitled', 'draft 4', tab.id)
+  })
+
   it('typing in tab B does not cancel tab A pending write', async () => {
     const a = seedTab({ path: '/ws/a.md', title: 'a.md', markdown: 'a' })
     const b = seedTab({ path: '/ws/b.md', title: 'b.md', markdown: 'b' })
@@ -107,6 +129,13 @@ describe('autosave', () => {
     expect(useTabs.getState().tabs[0].dirty).toBe(true) // v3 still unsaved
     await vi.advanceTimersByTimeAsync(500)
     expect(writes.some((w) => w.contents === 'v3 typed during save')).toBe(true)
+  })
+
+  it('a failed save still lands the buffer in recovery (freeze-kill guard)', async () => {
+    const { tauri } = await import('../src/lib/tauri')
+    const tab = seedTab({ path: '/ws/fail.md', title: 'fail.md', markdown: 'precious', dirty: true })
+    expect(await useTabs.getState().saveById(tab.id)).toBe('failed')
+    expect(vi.mocked(tauri.saveRecovery)).toHaveBeenCalledWith('fail.md', 'precious', tab.id)
   })
 })
 
@@ -151,16 +180,26 @@ describe('saveActive on untitled tab', () => {
     expect(writes).toEqual([{ path: '/ws/manual.md', contents: 'manual' }])
     expect(useTabs.getState().tabs[0].path).toBe('/ws/manual.md')
   })
+
+  it('saving untitled work for real drops its now-stale recovery snapshot', async () => {
+    const { tauri } = await import('../src/lib/tauri')
+    const tab = seedTab({ markdown: 'manual', dirty: true })
+    useTabs.setState({ activeId: tab.id })
+    mocks.pickSaveFile.mockResolvedValue('/ws/manual.md')
+    await useTabs.getState().saveActive()
+    expect(vi.mocked(tauri.deleteRecovery)).toHaveBeenCalledWith(tab.id)
+  })
 })
 
 describe('flushAll (quit)', () => {
   it('writes named dirty tabs and recovers untitled ones', async () => {
     seedTab({ path: '/ws/a.md', markdown: 'a', dirty: true })
     seedTab({ path: '/ws/clean.md', markdown: 'clean', dirty: false })
-    seedTab({ title: 'scratch', markdown: 'untitled work', dirty: true })
+    const untitled = seedTab({ title: 'scratch', markdown: 'untitled work', dirty: true })
     const { recovered, failed } = await useTabs.getState().flushAll()
     expect(writes).toEqual([{ path: '/ws/a.md', contents: 'a' }])
-    expect(recovered).toEqual(['/recovery/scratch.md'])
+    // The recovery key is the tab id — a stable filename per tab.
+    expect(recovered).toEqual([`/recovery/scratch-${untitled.id}.md`])
     expect(failed).toEqual([])
   })
 

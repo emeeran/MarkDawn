@@ -86,6 +86,30 @@ function clearTimer(id: string) {
   }
 }
 
+// Throttled recovery snapshots: dirty buffers land in the app's recovery dir
+// while untitled (no autosave destination) or when a save failed, so a
+// freeze/kill loses at most one interval of typing instead of everything up
+// to quit. The tab id keys a STABLE recovery filename — snapshots overwrite
+// their own file rather than accumulating one per interval.
+const recoveryAt = new Map<string, number>()
+const RECOVERY_SNAPSHOT_MS = 10_000
+
+function snapshotRecovery(tab: Tab) {
+  if (!tab.dirty) return
+  // `undefined` means "never snapshotted" — must not collide with a real
+  // timestamp (a fake/zero clock would otherwise skip the first snapshot).
+  const last = recoveryAt.get(tab.id)
+  if (last !== undefined && Date.now() - last < RECOVERY_SNAPSHOT_MS) return
+  recoveryAt.set(tab.id, Date.now())
+  void tauri.saveRecovery(tab.title, tab.markdown, tab.id).catch(() => {
+    recoveryAt.set(tab.id, 0) // the snapshot may be the only copy — retry after the window
+  })
+}
+
+function dropRecovery(id: string) {
+  void tauri.deleteRecovery(id).catch(() => {})
+}
+
 export const useTabs = create<TabsStore>((setState, get) => ({
   tabs: [],
   activeId: null,
@@ -134,16 +158,22 @@ export const useTabs = create<TabsStore>((setState, get) => ({
     }
     // A dirty tab that never had a path has no file to save to — write the
     // recovery copy the quit path uses, so closing never silently destroys
-    // the only copy of the text.
+    // the only copy of the text. (It is KEPT — the buffer is gone after this,
+    // so the snapshot is the copy.)
     const t2 = get().tabs.find((t) => t.id === id)
     if (t2?.dirty && !t2.path) {
       try {
-        const where = await tauri.saveRecovery(t2.title, t2.markdown)
+        const where = await tauri.saveRecovery(t2.title, t2.markdown, t2.id)
         useToast.getState().show(`Untitled work saved to ${where}`)
       } catch (e) {
         useToast.getState().show(`Close cancelled — could not save untitled work: ${e}`)
         return
       }
+    } else {
+      // Clean, or just saved to its real path: any earlier snapshot (e.g.
+      // from a failed-save window) is stale — it must not resurrect old
+      // content at the next launch.
+      dropRecovery(id)
     }
     setState((s) => {
       // Re-read: Save-As may have changed path/title.
@@ -231,7 +261,12 @@ export const useTabs = create<TabsStore>((setState, get) => ({
       id,
       setTimeout(() => {
         saveTimers.delete(id)
-        void get().saveById(id)
+        const tab = get().tabs.find((t) => t.id === id)
+        if (!tab) return
+        // Untitled tabs have no autosave destination (⌘S must not pop a
+        // dialog either) — their snapshot cadence is the recovery write.
+        if (tab.path) void get().saveById(id)
+        else snapshotRecovery(tab)
       }, 500),
     )
   },
@@ -277,6 +312,9 @@ export const useTabs = create<TabsStore>((setState, get) => ({
       } else {
         useToast.getState().show(`Save failed: ${e}`)
       }
+      // A halted or failed chain means everything typed past this point lives
+      // only in memory — keep a recovery copy landing on disk regardless.
+      snapshotRecovery(tab)
       return 'failed'
     }
   },
@@ -331,6 +369,8 @@ export const useTabs = create<TabsStore>((setState, get) => ({
       useToast.getState().show(`Save failed: ${e}`)
       return false
     }
+    // The buffer has a real home now — any untitled-era snapshot is stale.
+    dropRecovery(tab.id)
     void tauri.recentPush(path).catch((e) => console.warn('recent files:', e))
     return true
   },
@@ -384,7 +424,7 @@ export const useTabs = create<TabsStore>((setState, get) => ({
         if ((await get().saveById(tab.id)) === 'failed') failed.push(tab.title)
       } else {
         try {
-          const where = await tauri.saveRecovery(tab.title, tab.markdown)
+          const where = await tauri.saveRecovery(tab.title, tab.markdown, tab.id)
           recovered.push(where)
         } catch {
           // The recovery write is that tab's only copy — a failure here must
